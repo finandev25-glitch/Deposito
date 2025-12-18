@@ -9,8 +9,11 @@ export default defineConfig({
     exclude: ['lucide-react'],
   },
   server: {
-    host: true, // Permite acceso desde otras PCs en la red local
+    host: '0.0.0.0',
     port: 3000,
+    hmr: {
+      clientPort: 443
+    },
     proxy: {
       '/chatwoot-api': {
         target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
@@ -21,10 +24,9 @@ export default defineConfig({
     }
   },
   preview: {
-    host: true,
+    host: '0.0.0.0',
     port: 5173,
     strictPort: false,
-    allowedHosts: ['all'],
     proxy: {
       '/chatwoot-api': {
         target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
