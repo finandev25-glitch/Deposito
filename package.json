@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:3000": "vite --port 3000",
-    "build": "vite build && npm run copy-production-files",
-    "copy-production-files": "copy server-production.js dist\\ && copy start-server.bat dist\\ && copy package-production.json dist\\package.json",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "preview:5173": "vite preview --port 5173",
