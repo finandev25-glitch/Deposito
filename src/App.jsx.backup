@@ -1,0 +1,1172 @@
+import React, { useState, useContext, useEffect, useMemo, useRef, lazy, Suspense, useCallback } from "react";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AuthContext } from "./contexts/AuthContext.jsx";
+import { supabase } from "./supabaseClient.js";
+import Sidebar from "./components/Sidebar";
+import KanbanView from "./components/KanbanView";
+import AuthPage from "./pages/AuthPage.jsx";
+import PendingApproval from "./pages/PendingApproval.jsx";
+import MobileHeader from "./components/MobileHeader.jsx";
+import { useRealtimeDeposits } from "./hooks/useRealtimeDeposits";
+
+// Lazy loading para vistas menos usadas
+const TableView = lazy(() => import("./components/TableView"));
+const SucursalesView = lazy(() => import("./components/SucursalesView"));
+const BancosView = lazy(() => import("./components/BancosView"));
+const GestionBancosView = lazy(() => import("./components/GestionBancosView"));
+const GestionEmpresasView = lazy(() => import("./components/GestionEmpresasView"));
+const UsuariosView = lazy(() => import("./components/UsuariosView"));
+const ReportesView = lazy(() => import("./components/ReportesView"));
+const DocumentosView = lazy(() => import("./components/DocumentosView"));
+const ConfiguracionWhatsApp = lazy(() => import("./components/ConfiguracionWhatsApp"));
+const ConfiguracionChatWoot = lazy(() => import("./components/ConfiguracionChatWoot"));
+const EnviarMensajeChatWoot = lazy(() => import("./components/EnviarMensajeChatWoot"));
+import {
+  initialBancos,
+  initialEmpresas,
+  initialUsers,
+  generateMockCuentasBancarias,
+  generateMockSucursales,
+  generateMockDeposits,
+} from "./utils/mockData";
+import { Loader2, XCircle } from "lucide-react";
+
+const DEPOSIT_FULL_QUERY_STRING = `
+  id, numero_operacion, cliente, monto, fecha_registro, imagen_voucher, anexo, numero_operacion_banco, fecha_deposito, estado, observaciones, motivo_rechazo, fecha_validacion, referencia_cliente, validado_por, moneda, ruc_cliente,
+  chatwoot_conversation_id, chatwoot_message_id, chatwoot_config_id,
+  empresa:empresa_id (id, nombre, estado, abreviatura),
+  banco:banco_id (id, abreviatura, estado),
+  sucursal:sucursal_id (id, nombre, telefono),
+  trabajador:trabajador_sucursal_id (id, nombre),
+  validado_por_usuario:validado_por (id, nombre)
+`;
+
+function App() {
+  const { currentUser, users, loading } = useContext(AuthContext);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Variable para evitar actualizaciones duplicadas
+  const updatingDepositsRef = useRef(new Set());
+
+  // Variable para controlar si la carga inicial se completó (persiste entre renders)
+  const initialLoadCompleteRef = useRef(false);
+
+  // 🐛 DEBUG: Logging para diagnosticar el problema
+  React.useEffect(() => {
+    console.log("🔍 App.jsx - Estado actual:", {
+      loading,
+      currentUser: currentUser
+        ? {
+            nombre: currentUser.nombre,
+            rol: currentUser.rol,
+            estado: currentUser.estado,
+          }
+        : null,
+      usersCount: users?.length || 0,
+      supabaseConnected: !!supabase,
+    });
+  }, [loading, currentUser, users]);
+
+  // QueryClient para invalidar queries manualmente
+  const queryClient = useQueryClient();
+
+  const isSupabaseConnected = supabase && currentUser;
+
+  // Usar TanStack Query para cargar datos
+  const { data: appData, isLoading: appDataLoading, error: appDataError } = useQuery({
+    queryKey: ['appData', currentUser?.id],
+    queryFn: async () => {
+      console.log('🔄 TanStack Query: Iniciando carga de datos');
+
+      if (!isSupabaseConnected) {
+        console.log('📦 Usando datos mock (sin conexión a Supabase)');
+        return {
+          bancos: initialBancos,
+          empresas: initialEmpresas,
+          cuentas: generateMockCuentasBancarias(50, initialBancos, initialEmpresas),
+          sucursales: generateMockSucursales(8),
+          deposits: generateMockDeposits(50, [], initialUsers),
+          personal: []
+        };
+      }
+
+      // Cargar datos desde Supabase
+      console.log('📡 Cargando datos desde Supabase...');
+      const [bancosRes, empresasRes, cuentasRes, sucursalesRes, depositsRes, personalRes] =
+        await Promise.all([
+          supabase.from("bancos").select("*").order("nombre", { ascending: true }),
+          supabase.from("empresas").select("*").order("nombre", { ascending: true }),
+          supabase.from("cuentas_bancarias").select("*, empresa:empresas(*), banco:bancos(*)").order("created_at", { ascending: false }),
+          supabase.from("sucursales").select("*").order("nombre", { ascending: true }),
+          supabase.from("depositos").select(DEPOSIT_FULL_QUERY_STRING).order("fecha_registro", { ascending: false }),
+          supabase.from("sucursal_personal").select("*")
+        ]);
+
+      // Verificar errores
+      if (bancosRes.error) throw new Error(`Bancos: ${bancosRes.error.message}`);
+      if (empresasRes.error) throw new Error(`Empresas: ${empresasRes.error.message}`);
+      if (cuentasRes.error) throw new Error(`Cuentas: ${cuentasRes.error.message}`);
+      if (sucursalesRes.error) throw new Error(`Sucursales: ${sucursalesRes.error.message}`);
+      if (depositsRes.error) throw new Error(`Depósitos: ${depositsRes.error.message}`);
+      if (personalRes.error) throw new Error(`Personal: ${personalRes.error.message}`);
+
+      console.log('✅ Datos cargados exitosamente desde Supabase');
+      return {
+        bancos: bancosRes.data || [],
+        empresas: empresasRes.data || [],
+        cuentas: cuentasRes.data || [],
+        sucursales: sucursalesRes.data || [],
+        deposits: depositsRes.data || [],
+        personal: personalRes.data || []
+      };
+    },
+    enabled: !!currentUser && !loading,
+    staleTime: 5 * 60 * 1000, // 5 minutos
+    retry: 1
+  });
+
+  // Extraer datos de la query (con fallbacks)
+  const bancos = appData?.bancos || [];
+  const empresas = appData?.empresas || [];
+  const cuentas = appData?.cuentas || [];
+  const sucursales = appData?.sucursales || [];
+  const [deposits, setDeposits] = useState(appData?.deposits || []);
+  const personal = appData?.personal || [];
+
+  // Sincronizar deposits cuando appData cambie
+  useEffect(() => {
+    if (appData?.deposits) {
+      setDeposits(appData.deposits);
+    }
+  }, [appData?.deposits]);
+
+  // Auto-reload cuando el usuario regresa a la pestaña
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.hidden) {
+        // Cuando el usuario SE VA
+        console.log('👋 APP: Usuario se fue de la pestaña');
+      } else {
+        // Cuando el usuario REGRESA: Solo recargar si ya completamos la carga inicial
+        if (initialLoadCompleteRef.current) {
+          console.log('👁️ APP: Usuario regresó a la pestaña - Recargando página...');
+          window.location.reload();
+        } else {
+          console.log('👁️ APP: Usuario regresó, pero aún en carga inicial - no recargar');
+        }
+      }
+    };
+
+    // Marcar como completo cuando termine de cargar
+    if (!loading && !appDataLoading && currentUser) {
+      initialLoadCompleteRef.current = true;
+      console.log('✅ Carga inicial completada - initialLoadCompleteRef.current = true');
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [loading, appDataLoading, currentUser]);
+
+  // Manejo de sesión de autenticación de Supabase
+  useEffect(() => {
+    if (!supabase) return;
+
+    // Verificar sesión al montar
+    const checkSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error('❌ Error al verificar sesión:', error);
+      } else {
+        console.log('✅ Sesión verificada:', session ? 'Activa' : 'No hay sesión');
+      }
+    };
+
+    checkSession();
+
+    // Escuchar cambios de autenticación
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event) => {
+        console.log('🔐 Auth event:', event);
+
+        if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+          console.log('🚪 Usuario cerró sesión o fue eliminado');
+          // El AuthContext maneja el logout
+        }
+        if (event === 'TOKEN_REFRESHED') {
+          console.log('🔄 Token de autenticación actualizado automáticamente');
+        }
+        if (event === 'SIGNED_IN') {
+          console.log('✅ Usuario inició sesión');
+        }
+      }
+    );
+
+    // Verificar y refrescar sesión cuando la pestaña vuelve a estar activa
+    const handleAuthVisibilityChange = async () => {
+      if (!document.hidden && supabase) {
+        console.log('👁️ AUTH: Verificando sesión al regresar a la pestaña...');
+
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (!session) {
+          console.log('⚠️ AUTH: No hay sesión, intentando refrescar...');
+          const { data: refreshData, error } = await supabase.auth.refreshSession();
+
+          if (error) {
+            console.error('❌ AUTH: Error al refrescar sesión:', error);
+          } else if (refreshData?.session) {
+            console.log('✅ AUTH: Sesión refrescada exitosamente');
+          }
+        } else {
+          console.log('✅ AUTH: Sesión activa confirmada');
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleAuthVisibilityChange);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleAuthVisibilityChange);
+    };
+  }, []);
+
+  // Callback para Realtime
+  const handleRealtimeUpdate = useCallback((updatedDeposits, deletedId) => {
+    console.log("📥 handleRealtimeUpdate llamado en App.jsx:", {
+      updatedDeposits: updatedDeposits?.length,
+      deletedId,
+      timestamp: new Date().toISOString()
+    });
+
+    if (deletedId) {
+      // Es un DELETE
+      setDeposits((prevDeposits) => {
+        return prevDeposits.filter((d) => d.id !== deletedId);
+      });
+    } else if (updatedDeposits && updatedDeposits.length > 0) {
+      // Es INSERT o UPDATE
+      setDeposits((prevDeposits) => {
+        console.log("🔄 Estado previo de deposits:", prevDeposits.length);
+
+        // Crear un mapa para búsqueda rápida
+        const updatedMap = new Map(updatedDeposits.map(d => [d.id, d]));
+
+        // Actualizar los depósitos existentes
+        const updated = prevDeposits.map((d) =>
+          updatedMap.has(d.id) ? updatedMap.get(d.id) : d
+        );
+
+        // Agregar nuevos depósitos que no existan
+        const existingIds = new Set(prevDeposits.map(d => d.id));
+        const newDeposits = updatedDeposits.filter(d => !existingIds.has(d.id));
+
+        const result = [...newDeposits, ...updated];
+        console.log("✅ Nuevo estado de deposits:", {
+          prevCount: prevDeposits.length,
+          newCount: result.length,
+          nuevosAgregados: newDeposits.length
+        });
+
+        return result;
+      });
+    }
+  }, []);
+
+  // Realtime habilitado para Supabase Cloud
+  useRealtimeDeposits(
+    isSupabaseConnected,
+    currentUser,
+    handleRealtimeUpdate,
+    DEPOSIT_FULL_QUERY_STRING
+  );
+
+  const depositsWithFullData = useMemo(() => {
+    if (!deposits) return [];
+    if (isSupabaseConnected) {
+      return deposits;
+    }
+    return deposits.map((dep) => {
+      const trabajador = personal.find(
+        (p) => p.id === dep.trabajador_sucursal_id
+      );
+      const validator = users.find((u) => u.id === dep.validado_por);
+      return {
+        ...dep,
+        trabajador: trabajador ? { nombre: trabajador.nombre } : null,
+        validado_por_usuario: validator ? { nombre: validator.nombre } : null,
+        sucursal: { nombre: dep.sucursal },
+        banco: { abreviatura: dep.banco },
+        empresa: { nombre: dep.empresa },
+      };
+    });
+  }, [deposits, personal, users, isSupabaseConnected]);
+
+  useEffect(() => {
+    if (location.pathname === "/usuarios" && currentUser?.rol !== "admin") {
+      navigate("/kanban");
+    }
+  }, [location.pathname, currentUser, navigate]);
+
+  const handleOpenVoucherWindow = (url, depositData = null) => {
+    if (!url) {
+      alert("No hay un voucher para mostrar.");
+      return;
+    }
+
+    // Mensaje para cargar el voucher
+    window.postMessage({ type: "LOAD_VOUCHER", url: url }, "*");
+
+    // Si tenemos datos del depósito, enviamos también los campos para llenar
+    if (depositData && depositData.numero_operacion && depositData.monto) {
+      setTimeout(() => {
+        window.postMessage(
+          {
+            type: "FILL_EXTENSION_FIELDS",
+            data: {
+              nroOper: depositData.numero_operacion,
+              importe: depositData.monto.toString(),
+            },
+          },
+          "*"
+        );
+
+        console.log("✅ Datos enviados a la extensión:", {
+          nroOper: depositData.numero_operacion,
+          importe: depositData.monto,
+        });
+      }, 500); // Pequeño delay para asegurar que la extensión esté lista
+    }
+  };
+
+  // --- Lógica CRUD (sin cambios) ---
+  const handleAddBanco = async (newBancoData) => {
+    if (isSupabaseConnected) {
+      const { data, error } = await supabase
+        .from("bancos")
+        .insert([{ ...newBancoData, estado: "activo" }])
+        .select()
+        .single();
+      if (error) {
+        alert(`Error: ${error.message}`);
+        return null;
+      }
+      setBancos((prev) => [data, ...prev]);
+      return data;
+    } else {
+      const newBanco = {
+        id: Date.now().toString(),
+        ...newBancoData,
+        estado: "activo",
+      };
+      setBancos((prev) => [newBanco, ...prev]);
+      return newBanco;
+    }
+  };
+  const handleUpdateBanco = async (updatedBanco) => {
+    if (isSupabaseConnected) {
+      const { id, ...updateData } = updatedBanco;
+      const { data, error } = await supabase
+        .from("bancos")
+        .update(updateData)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) {
+        alert(`Error: ${error.message}`);
+        return null;
+      }
+      setBancos((prev) => prev.map((b) => (b.id === id ? data : b)));
+      return data;
+    } else {
+      setBancos((prev) =>
+        prev.map((b) => (b.id === updatedBanco.id ? updatedBanco : b))
+      );
+      return updatedBanco;
+    }
+  };
+  const handleDeleteBanco = async (bancoId) => {
+    if (isSupabaseConnected) {
+      const { error } = await supabase
+        .from("bancos")
+        .delete()
+        .eq("id", bancoId);
+      if (error) alert(`Error: ${error.message}`);
+      else setBancos((prev) => prev.filter((b) => b.id !== bancoId));
+    } else {
+      setBancos((prev) => prev.filter((b) => b.id !== bancoId));
+    }
+  };
+  const handleAddEmpresa = async (newEmpresaData) => {
+    console.log("🏢 Creando nueva empresa:", newEmpresaData);
+    console.log("🔗 Supabase conectado:", isSupabaseConnected);
+
+    if (isSupabaseConnected) {
+      try {
+        const { data, error } = await supabase
+          .from("empresas")
+          .insert({ ...newEmpresaData, estado: "activo" })
+          .select()
+          .single();
+
+        if (error) {
+          console.error("❌ Error creando empresa en Supabase:", error);
+          alert(`Error: ${error.message}`);
+          return null;
+        }
+
+        console.log("✅ Empresa creada en Supabase:", data);
+        setEmpresas((prev) => [...prev, data]);
+        return data;
+      } catch (error) {
+        console.error("💥 Error crítico creando empresa:", error);
+        alert(`Error crítico: ${error.message || error}`);
+        return null;
+      }
+    } else {
+      const newEmpresa = {
+        id: Date.now().toString(),
+        ...newEmpresaData,
+        estado: "activo",
+        created_at: new Date().toISOString(),
+      };
+      console.log("🎭 Empresa creada en modo simulado:", newEmpresa);
+      setEmpresas((prev) => [...prev, newEmpresa]);
+      return newEmpresa;
+    }
+  };
+  const handleUpdateEmpresa = async (empresaId, updatedData) => {
+    console.log("🔄 Actualizando empresa:", empresaId, updatedData);
+    console.log("🔗 Supabase conectado:", isSupabaseConnected);
+
+    if (isSupabaseConnected) {
+      try {
+        console.log("📡 Enviando actualización a Supabase...");
+
+        // Crear un timeout de 15 segundos para evitar colgarse
+        const updatePromise = supabase
+          .from("empresas")
+          .update(updatedData)
+          .eq("id", empresaId)
+          .select()
+          .single();
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error("Timeout: La consulta tardó más de 15 segundos")
+              ),
+            15000
+          )
+        );
+
+        const { data, error } = await Promise.race([
+          updatePromise,
+          timeoutPromise,
+        ]);
+
+        if (error) {
+          console.error("❌ Error actualizando empresa en Supabase:", error);
+          alert(`Error: ${error.message}`);
+          return null;
+        }
+
+        console.log("✅ Empresa actualizada en Supabase:", data);
+        setEmpresas((prev) => prev.map((e) => (e.id === empresaId ? data : e)));
+        return data;
+      } catch (error) {
+        console.error("💥 Error crítico actualizando empresa:", error);
+
+        // Si es un timeout o error de conexión, usar fallback local
+        if (
+          error.message?.includes("Timeout") ||
+          error.message?.includes("network")
+        ) {
+          console.log("🔄 Usando fallback local debido a problemas de red...");
+          const updatedEmpresa = { id: empresaId, ...updatedData };
+          setEmpresas((prev) =>
+            prev.map((e) => (e.id === empresaId ? { ...e, ...updatedData } : e))
+          );
+          return updatedEmpresa;
+        }
+
+        alert(`Error crítico: ${error.message || error}`);
+        return null;
+      }
+    } else {
+      console.log("🎭 Actualizando empresa en modo simulado");
+      const updatedEmpresa = { id: empresaId, ...updatedData };
+      console.log("✅ Empresa actualizada en modo simulado:", updatedEmpresa);
+      setEmpresas((prev) =>
+        prev.map((e) => (e.id === empresaId ? { ...e, ...updatedData } : e))
+      );
+      return updatedEmpresa;
+    }
+  };
+  const handleDeleteEmpresa = async (empresaId) => {
+    console.log("🗑️ Eliminando empresa (marcando como inactiva):", empresaId);
+
+    if (isSupabaseConnected) {
+      try {
+        const { error } = await supabase
+          .from("empresas")
+          .update({ estado: "inactivo" })
+          .eq("id", empresaId);
+
+        if (error) {
+          console.error("❌ Error eliminando empresa:", error);
+          alert(`Error: ${error.message}`);
+          return;
+        }
+
+        console.log("✅ Empresa marcada como inactiva en Supabase");
+        setEmpresas((prev) => prev.map((e) => e.id === empresaId ? { ...e, estado: "inactivo" } : e));
+      } catch (error) {
+        console.error("💥 Error crítico eliminando empresa:", error);
+        alert(`Error crítico: ${error.message || error}`);
+      }
+    } else {
+      console.log("🎭 Eliminando empresa en modo simulado");
+      setEmpresas((prev) => prev.map((e) => e.id === empresaId ? { ...e, estado: "inactivo" } : e));
+    }
+  };
+  const handleAddCuenta = async (newCuentaData) => {
+    if (isSupabaseConnected) {
+      const { data, error } = await supabase
+        .from("cuentas_bancarias")
+        .insert(newCuentaData)
+        .select("*, empresa:empresas(*), banco:bancos(*)")
+        .single();
+      if (error) alert(`Error: ${error.message}`);
+      else setCuentas((prev) => [data, ...prev]);
+    } else {
+      const newCuenta = {
+        id: Date.now().toString(),
+        ...newCuentaData,
+        empresa: {
+          nombre: empresas.find((e) => e.id === newCuentaData.empresa_id)
+            ?.nombre,
+        },
+        banco: {
+          abreviatura: bancos.find((b) => b.id === newCuentaData.banco_id)
+            ?.abreviatura,
+        },
+        depositos_hoy: 0,
+        validaciones: 0,
+        errores: 0,
+        estado: "activo",
+      };
+      setCuentas((prev) => [newCuenta, ...prev]);
+    }
+  };
+  const handleUpdateCuenta = async (cuentaId, updatedData) => {
+    if (isSupabaseConnected) {
+      const { data, error } = await supabase
+        .from("cuentas_bancarias")
+        .update(updatedData)
+        .eq("id", cuentaId)
+        .select("*, empresa:empresas(*), banco:bancos(*)")
+        .single();
+      if (error) alert(`Error: ${error.message}`);
+      else
+        setCuentas((prev) => prev.map((c) => (c.id === cuentaId ? data : c)));
+    } else {
+      setCuentas((prev) =>
+        prev.map((c) => (c.id === cuentaId ? { ...c, ...updatedData } : c))
+      );
+    }
+  };
+  const handleDeleteCuenta = async (cuentaId) => {
+    if (isSupabaseConnected) {
+      const { error } = await supabase
+        .from("cuentas_bancarias")
+        .delete()
+        .eq("id", cuentaId);
+      if (error) alert(`Error: ${error.message}`);
+      else setCuentas((prev) => prev.filter((c) => c.id !== cuentaId));
+    } else {
+      setCuentas((prev) => prev.filter((c) => c.id !== cuentaId));
+    }
+  };
+  const handleAddSucursal = async (newSucursalData) => {
+    if (isSupabaseConnected) {
+      const { data, error } = await supabase
+        .from("sucursales")
+        .insert(newSucursalData)
+        .select()
+        .single();
+      if (error) {
+        alert(`Error: ${error.message}`);
+      } else {
+        // Invalidar la query para recargar los datos
+        queryClient.invalidateQueries({ queryKey: ['appData'] });
+      }
+    }
+  };
+
+  const handleUpdateSucursal = async (sucursalId, updatedData) => {
+    if (isSupabaseConnected) {
+      const { data, error } = await supabase
+        .from("sucursales")
+        .update(updatedData)
+        .eq("id", sucursalId)
+        .select()
+        .single();
+      if (error) {
+        alert(`Error: ${error.message}`);
+      } else {
+        // Invalidar la query para recargar los datos
+        queryClient.invalidateQueries({ queryKey: ['appData'] });
+      }
+    }
+  };
+
+  const handleAddPersonalToSucursal = async (sucursalId, nombre, telefono = null, empresa = null) => {
+    if (isSupabaseConnected) {
+      const { data, error } = await supabase
+        .from("sucursal_personal")
+        .insert({
+          sucursal_id: sucursalId,
+          nombre: nombre,
+          telefono_origen: telefono,
+          empresa: empresa,
+          estado: "activo"
+        })
+        .select()
+        .single();
+      if (error) {
+        alert(`Error: ${error.message}`);
+        return null;
+      }
+      // Invalidar la query para recargar los datos
+      queryClient.invalidateQueries({ queryKey: ['appData'] });
+      return data;
+    }
+    return null;
+  };
+
+  const handleRemovePersonalFromSucursal = async (personalId) => {
+    if (isSupabaseConnected) {
+      const { error } = await supabase
+        .from("sucursal_personal")
+        .delete()
+        .eq("id", personalId);
+      if (error) {
+        alert(`Error: ${error.message}`);
+      } else {
+        // Invalidar la query para recargar los datos
+        queryClient.invalidateQueries({ queryKey: ['appData'] });
+      }
+    }
+  };
+
+  const handleUpdatePersonal = async (personalId, updates) => {
+    if (isSupabaseConnected) {
+      const { error } = await supabase
+        .from("sucursal_personal")
+        .update(updates)
+        .eq("id", personalId);
+      if (error) {
+        alert(`Error: ${error.message}`);
+      } else {
+        // Invalidar la query para recargar los datos
+        queryClient.invalidateQueries({ queryKey: ['appData'] });
+      }
+    }
+  };
+  const handleUpdateDeposit = useCallback(async (updatedDeposit) => {
+    const depositId = updatedDeposit.id;
+
+    // Evitar actualizaciones duplicadas simultáneas del mismo depósito
+    if (updatingDepositsRef.current.has(depositId)) {
+      console.log(
+        "⚠️ Actualizacion duplicada prevenida para depósito:",
+        depositId
+      );
+      return;
+    }
+
+    updatingDepositsRef.current.add(depositId);
+
+    console.log("🔄 handleUpdateDeposit ejecutado:", {
+      updatedDeposit,
+      isSupabaseConnected,
+    });
+
+    try {
+      if (isSupabaseConnected) {
+        const { id, ...updateData } = updatedDeposit;
+        console.log("📡 Actualizando depósito en Supabase:", {
+          id,
+          updateData,
+        });
+
+        const { data, error } = await supabase
+          .from("depositos")
+          .update(updateData)
+          .eq("id", id)
+          .select(DEPOSIT_FULL_QUERY_STRING)
+          .single();
+
+        if (error) {
+          console.error("❌ Error actualizando depósito en Supabase:", error);
+          throw error;
+        }
+
+        console.log("✅ Depósito actualizado en Supabase:", data);
+
+        // Actualizar el estado local también - forzando re-render completo
+        setDeposits((prev) => {
+          const newDeposits = prev.map((d) =>
+            d.id === updatedDeposit.id ? { ...d, ...data } : d
+          );
+          const depositoActualizado = newDeposits.find(
+            (d) => d.id === updatedDeposit.id
+          );
+          console.log("🔄 Estado deposits actualizado:", depositoActualizado);
+          console.log("📊 Estado específico del depósito:", {
+            id: depositoActualizado?.id,
+            estado: depositoActualizado?.estado,
+            validado_por: depositoActualizado?.validado_por,
+            fecha_validacion: depositoActualizado?.fecha_validacion,
+          });
+          return [...newDeposits]; // Forzar nueva referencia para re-render
+        });
+      } else {
+        console.log(
+          "🎭 Actualizando depósito en modo simulado:",
+          updatedDeposit
+        );
+        setDeposits((prev) =>
+          prev.map((d) => (d.id === updatedDeposit.id ? updatedDeposit : d))
+        );
+      }
+
+      console.log("✅ handleUpdateDeposit completado exitosamente");
+    } catch (error) {
+      console.error("💥 Error en handleUpdateDeposit:", error);
+    } finally {
+      // Limpiar la referencia después de la actualización
+      updatingDepositsRef.current.delete(depositId);
+    }
+  }, [isSupabaseConnected]);
+  const handleTakeDepositForValidation = useCallback(async (deposit) => {
+    console.log('🎯 APP: handleTakeDepositForValidation llamado', {
+      depositId: deposit.id,
+      currentUser: currentUser?.nombre,
+      hasCurrentUser: !!currentUser,
+      isLocked: updatingDepositsRef.current.has(deposit.id),
+      timestamp: new Date().toISOString()
+    });
+
+    if (!currentUser) {
+      console.log('❌ APP: No hay currentUser, retornando null');
+      return null;
+    }
+
+    // Limpiar bloqueo si existe (podría haber quedado de una actualización anterior)
+    if (updatingDepositsRef.current.has(deposit.id)) {
+      console.log('🔓 Limpiando bloqueo antiguo para depósito:', deposit.id);
+      updatingDepositsRef.current.delete(deposit.id);
+    }
+
+    if (!isSupabaseConnected) {
+      console.log('📴 APP: Modo sin conexión, actualizando localmente');
+      const updatedDepositForUI = {
+        ...deposit,
+        estado: "en_validacion",
+        validado_por: currentUser.id,
+        fecha_validacion: new Date().toISOString(),
+        validado_por_usuario: {
+          id: currentUser.id,
+          nombre: currentUser.nombre,
+        },
+      };
+      setDeposits((prev) =>
+        prev.map((d) => (d.id === deposit.id ? updatedDepositForUI : d))
+      );
+      console.log('✅ APP: Depósito actualizado localmente, retornando');
+      return updatedDepositForUI;
+    }
+
+    // SOLUCIÓN: Despertar la conexión con un ping rápido ANTES del UPDATE
+    console.log('🔄 APP: Actualizando estado en Supabase...');
+    console.log('📋 APP: Datos del UPDATE:', {
+      depositId: deposit.id,
+      nuevoEstado: "en_validacion",
+      validadoPor: currentUser.id,
+      nombreUsuario: currentUser.nombre
+    });
+
+    try {
+      // 1. Ping eliminado porque causaba bloqueos
+      // console.log('🔌 APP: Haciendo ping para despertar conexión...');
+      // const pingStart = Date.now();
+      // await supabase.from('depositos').select('id').limit(1);
+      // console.log(`✅ APP: Ping completado en ${Date.now() - pingStart}ms`);
+
+      const updateData = {
+        estado: "en_validacion",
+        validado_por: currentUser.id,
+        fecha_validacion: new Date().toISOString(),
+      };
+
+      console.log('📤 APP: Enviando UPDATE a Supabase con timeout de 10 segundos...');
+      const startTime = Date.now();
+
+      // Implementación de reintentos para el UPDATE
+      let attempts = 0;
+      const maxAttempts = 3;
+      let success = false;
+      let resultData = null;
+      let resultError = null;
+
+      while (attempts < maxAttempts && !success) {
+        attempts++;
+        console.log(`📤 APP: Intento de UPDATE ${attempts}/${maxAttempts}...`);
+        
+        try {
+          // Crear Promise con timeout
+          const updatePromise = supabase
+            .from("depositos")
+            .update(updateData)
+            .eq("id", deposit.id)
+            .select(DEPOSIT_FULL_QUERY_STRING)
+            .single();
+
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => {
+              reject(new Error('TIMEOUT: La conexión tardó más de 10 segundos.'));
+            }, 10000)
+          );
+
+          // Race entre el UPDATE y el timeout
+          const { data, error } = await Promise.race([updatePromise, timeoutPromise]);
+          
+          if (error) throw error;
+          
+          resultData = data;
+          success = true;
+          
+        } catch (error) {
+          console.error(`❌ APP: Falló intento ${attempts}:`, error.message);
+          resultError = error;
+          
+          if (attempts < maxAttempts) {
+            console.log(`⏳ APP: Esperando 1s antes de reintentar...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Opcional: Intentar refrescar sesión si es el último intento
+            if (attempts === maxAttempts - 1) {
+               console.log('🔄 APP: Intentando refrescar sesión antes del último intento...');
+               await supabase.auth.refreshSession();
+            }
+          }
+        }
+      }
+
+      const endTime = Date.now();
+      console.log(`⏱️ APP: UPDATE finalizado en ${endTime - startTime}ms. Éxito: ${success}`);
+
+      if (!success) {
+        const error = resultError || new Error("Fallaron todos los intentos de actualización");
+        console.error('❌ APP: Error final en actualización Supabase:', error);
+        alert(`Error al actualizar depósito: ${error.message}`);
+        return null;
+      }
+      
+      const data = resultData;
+
+
+
+
+
+      console.log('✅ APP: Depósito actualizado exitosamente en Supabase');
+      console.log('📦 APP: Datos recibidos:', {
+        id: data?.id,
+        estado: data?.estado,
+        validado_por: data?.validado_por,
+        validado_por_usuario: data?.validado_por_usuario?.nombre
+      });
+
+      return data || { ...deposit, estado: "en_validacion" };
+
+    } catch (error) {
+      console.error('💥 APP: Error inesperado en try-catch:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      alert(`Error inesperado: ${error.message}`);
+      return null;
+    }
+  }, [currentUser, isSupabaseConnected]);
+
+  // Verificar si AuthContext está cargando
+  if (loading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="flex items-center">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <p className="ml-4 text-lg text-gray-700 dark:text-gray-300">
+            Inicializando aplicación...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 🔄 Mostrar loading mientras se inicializa
+  if (loading) {
+    console.log("⏳ Mostrando loading de App...");
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto" />
+          <p className="mt-4 text-lg text-gray-700 dark:text-gray-300">
+            Inicializando aplicación...
+          </p>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+            {supabase ? "Conectando con Supabase..." : "Modo simulado..."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    console.log("🔐 Sin usuario, mostrando AuthPage...");
+    return <AuthPage />;
+  }
+
+  if (currentUser.estado === "inactivo") {
+    console.log("🚫 Usuario inactivo, mostrando PendingApproval...");
+    return <PendingApproval />;
+  }
+
+  if (appDataLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <p className="ml-4 text-lg text-gray-700 dark:text-gray-300">
+          Cargando datos...
+        </p>
+      </div>
+    );
+  }
+
+  if (appDataError) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50 dark:bg-gray-950 p-8">
+        <div className="text-center">
+          <XCircle className="mx-auto h-12 w-12 text-red-500" />
+          <h3 className="mt-4 text-xl font-semibold text-gray-900 dark:text-gray-100">
+            Error Crítico
+          </h3>
+          <p className="mt-2 text-base text-gray-600 dark:text-gray-400">
+            {appDataError.message || 'Error al cargar los datos'}
+          </p>
+          <p className="mt-4 text-sm text-gray-500">
+            Intenta recargar la página. Si el problema persiste, contacta a
+            soporte.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-6 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Recargar página
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
+      <Sidebar
+        currentPath={location.pathname}
+        navigate={navigate}
+        isSidebarCollapsed={isSidebarCollapsed}
+        setIsSidebarCollapsed={setIsSidebarCollapsed}
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <MobileHeader onMenuClick={() => setIsMobileMenuOpen(true)} />
+        <main className="flex-1 overflow-y-auto">
+          <Routes>
+            <Route path="/" element={<Navigate to="/kanban" replace />} />
+            <Route
+              path="/kanban"
+              element={
+                <KanbanView
+                  deposits={depositsWithFullData}
+                  onUpdateDeposit={handleUpdateDeposit}
+                  onTakeDeposit={handleTakeDepositForValidation}
+                  empresas={empresas}
+                  bancos={bancos}
+                  cuentas={cuentas}
+                  onOpenVoucherWindow={handleOpenVoucherWindow}
+                />
+              }
+            />
+            <Route
+              path="/table"
+              element={
+                <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                  <TableView
+                    deposits={depositsWithFullData}
+                    onUpdateDeposit={handleUpdateDeposit}
+                    empresas={empresas}
+                    bancos={bancos}
+                    cuentas={cuentas}
+                    onOpenVoucherWindow={handleOpenVoucherWindow}
+                  />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/sucursales"
+              element={
+                <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                  <SucursalesView
+                    sucursales={sucursales}
+                    deposits={deposits}
+                    onAddSucursal={handleAddSucursal}
+                    onUpdateSucursal={handleUpdateSucursal}
+                    onDeleteSucursal={(id) => handleUpdateSucursal(id, { estado: "inactiva" })}
+                    onAddPersonal={handleAddPersonalToSucursal}
+                    onRemovePersonal={handleRemovePersonalFromSucursal}
+                    onUpdatePersonal={handleUpdatePersonal}
+                  />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/bancos"
+              element={
+                <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                  <BancosView
+                    bancos={bancos}
+                    empresas={empresas}
+                    onAddEmpresa={handleAddEmpresa}
+                    cuentas={cuentas}
+                    onAddCuenta={handleAddCuenta}
+                    onUpdateCuenta={handleUpdateCuenta}
+                    onDeleteCuenta={handleDeleteCuenta}
+                  />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/gestion-bancos"
+              element={
+                currentUser?.rol === "admin" ? (
+                  <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                    <GestionBancosView
+                      bancos={bancos}
+                      onAddBanco={handleAddBanco}
+                      onUpdateBanco={handleUpdateBanco}
+                      onDeleteBanco={handleDeleteBanco}
+                    />
+                  </Suspense>
+                ) : (
+                  <Navigate to="/kanban" replace />
+                )
+              }
+            />
+            <Route
+              path="/gestion-empresas"
+              element={
+                currentUser?.rol === "admin" ? (
+                  <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                    <GestionEmpresasView
+                      empresas={empresas}
+                      onAddEmpresa={handleAddEmpresa}
+                      onUpdateEmpresa={handleUpdateEmpresa}
+                      onDeleteEmpresa={handleDeleteEmpresa}
+                    />
+                  </Suspense>
+                ) : (
+                  <Navigate to="/kanban" replace />
+                )
+              }
+            />
+            <Route
+              path="/usuarios"
+              element={
+                currentUser?.rol === "admin" ? (
+                  <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                    <UsuariosView />
+                  </Suspense>
+                ) : (
+                  <Navigate to="/kanban" replace />
+                )
+              }
+            />
+            <Route
+              path="/reportes"
+              element={
+                <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                  <ReportesView />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/documentos"
+              element={
+                <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                  <DocumentosView deposits={depositsWithFullData} />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/configuracion-whatsapp"
+              element={
+                currentUser?.rol === "admin" ? (
+                  <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                    <ConfiguracionWhatsApp />
+                  </Suspense>
+                ) : (
+                  <Navigate to="/kanban" replace />
+                )
+              }
+            />
+            <Route
+              path="/configuracion-chatwoot"
+              element={
+                currentUser?.rol === "admin" ? (
+                  <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                    <ConfiguracionChatWoot />
+                  </Suspense>
+                ) : (
+                  <Navigate to="/kanban" replace />
+                )
+              }
+            />
+            <Route
+              path="/enviar-mensaje-chatwoot"
+              element={
+                currentUser?.rol === "admin" ? (
+                  <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+                    <EnviarMensajeChatWoot />
+                  </Suspense>
+                ) : (
+                  <Navigate to="/kanban" replace />
+                )
+              }
+            />
+          </Routes>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default App;

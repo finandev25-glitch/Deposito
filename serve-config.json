@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/chatwoot-api/(.*)", "destination": "https://chatwoot-chatwoot.gnfcio.easypanel.host/$1" }
+  ]
+}

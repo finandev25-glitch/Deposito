@@ -1,0 +1,47 @@
+{
+  "name": "sistema-control-depositos",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:3000": "vite --port 3000",
+    "build": "vite build && npm run copy-production-files",
+    "copy-production-files": "copy server-production.js dist\\ && copy start-server.bat dist\\ && copy package-production.json dist\\package.json",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "preview:5173": "vite preview --port 5173",
+    "start": "node server.js",
+    "server": "npm run build && npm start"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "express": "^5.2.1",
+    "framer-motion": "^12.5.0",
+    "gapi-script": "^1.2.0",
+    "html2canvas": "^1.4.1",
+    "http-proxy-middleware": "^3.0.5",
+    "jspdf": "^3.0.4",
+    "jspdf-autotable": "^5.0.2",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.9.6",
+    "recharts": "^3.5.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@faker-js/faker": "^8.4.1",
+    "@vitejs/plugin-react": "^4.5.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.27.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^15.9.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "vite": "^6.3.5"
+  }
+}

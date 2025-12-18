@@ -1,0 +1,810 @@
+import React, {
+  useState,
+  useMemo,
+  useContext,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import DepositCard from "./DepositCard";
+import DepositDetailModal from "./DepositDetailModal";
+import TrabajadoresBotOffModal from "./TrabajadoresBotOffModal";
+import ContactosModal from "./ContactosModal";
+import {
+  Search,
+  ChevronRight,
+  ChevronDown,
+  Building,
+  CreditCard,
+  Calendar,
+  BotOff,
+  MessageCircle,
+} from "lucide-react";
+import { AuthContext } from "../contexts/AuthContext.jsx";
+import { toLocalISOString } from "../utils/dateFormatters";
+import {
+  saveOpenDepositId,
+  clearOpenDepositId,
+  restoreOpenDeposit,
+  PERSISTENCE_CONFIG,
+} from "../utils/persistenceHelpers";
+
+const ColumnContent = ({ deposits, onCardClick }) => {
+  if (!deposits || deposits.length === 0) {
+    return (
+      <div className="text-center text-gray-500 dark:text-gray-400 py-8 px-4">
+        <p className="text-sm">No hay depósitos en este estado.</p>
+      </div>
+    );
+  }
+  return (
+    <AnimatePresence>
+      {deposits.map((deposit) => (
+        <motion.div
+          key={deposit.id}
+          layout
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.9 }}
+          transition={{ duration: 0.2 }}
+        >
+          <DepositCard deposit={deposit} onClick={() => onCardClick(deposit)} />
+        </motion.div>
+      ))}
+    </AnimatePresence>
+  );
+};
+
+const KanbanView = ({
+  deposits,
+  onUpdateDeposit,
+  onTakeDeposit,
+  empresas,
+  bancos,
+  cuentas,
+  onOpenVoucherWindow,
+}) => {
+  const { currentUser } = useContext(AuthContext);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [filterEmpresa, setFilterEmpresa] = useState("all");
+  const [filterBanco, setFilterBanco] = useState("all");
+  const [filterDateOption, setFilterDateOption] = useState("specific");
+  const [specificDate, setSpecificDate] = useState(() =>
+    toLocalISOString(new Date())
+  );
+  const [selectedDeposit, setSelectedDeposit] = useState(null);
+  const selectedDepositRef = useRef(null);
+  const modalOpenTimeRef = useRef(0);
+  const hasRestoredRef = useRef(false);
+
+  // Estados para colapsar/expandir secciones de "En Validación"
+  const [showNormales, setShowNormales] = useState(true);
+  const [showAntiguos, setShowAntiguos] = useState(true);
+
+  // Estado para modal de trabajadores con bot Off
+  const [showBotOffModal, setShowBotOffModal] = useState(false);
+  const [showContactosModal, setShowContactosModal] = useState(false);
+
+  // Mantener ref actualizada y registrar tiempo de apertura
+  useEffect(() => {
+    selectedDepositRef.current = selectedDeposit;
+    if (selectedDeposit) {
+      modalOpenTimeRef.current = Date.now();
+      console.log(
+        "📂 KANBAN: Modal abierto, guardando en localStorage. ID:",
+        selectedDeposit.id
+      );
+
+      // Guardar ID del depósito abierto para restaurar después del reload
+      saveOpenDepositId(selectedDeposit.id);
+    } else {
+      // No limpiar automáticamente localStorage aquí
+      // Se limpia explícitamente en handleCloseModal cuando el usuario cierra el modal
+      console.log("🔒 KANBAN: Modal cerrado (selectedDeposit es null)");
+    }
+  }, [selectedDeposit]);
+
+  // Restaurar modal después de page reload
+  useEffect(() => {
+    // Solo restaurar una vez al cargar
+    if (hasRestoredRef.current) return;
+
+    console.log(
+      "🔍 KANBAN: Verificando restauración inicial. deposits:",
+      deposits?.length
+    );
+
+    if (deposits && deposits.length > 0) {
+      const wasRestored = restoreOpenDeposit(
+        deposits,
+        setSelectedDeposit,
+        selectedDeposit
+      );
+      hasRestoredRef.current = true;
+
+      if (wasRestored) {
+        console.log(
+          "✅ KANBAN: Modal restaurado exitosamente en carga inicial"
+        );
+      } else {
+        console.log("ℹ️ KANBAN: No hay modal para restaurar en carga inicial");
+      }
+    }
+  }, [deposits, selectedDeposit]);
+
+  // Monitor deposits prop changes
+  useEffect(() => {
+    console.log("📊 KANBAN: Prop deposits actualizada:", deposits?.length);
+  }, [deposits]);
+
+  // 👁️ Restaurar modal cuando la pestaña vuelve a estar visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.log(
+          "👁️ KANBAN: Pestaña visible, verificando si hay modal para restaurar"
+        );
+        restoreOpenDeposit(deposits, setSelectedDeposit, selectedDeposit);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [deposits, selectedDeposit]);
+
+  // Monitorear cambios en selectedDeposit
+  useEffect(() => {
+    console.log(
+      "🔍 KANBAN: selectedDeposit cambió:",
+      selectedDeposit
+        ? {
+            id: selectedDeposit.id,
+            estado: selectedDeposit.estado,
+            es_antiguo: selectedDeposit.es_antiguo,
+          }
+        : "null"
+    );
+  }, [selectedDeposit]);
+
+  // CRÍTICO: Sincronizar selectedDeposit cuando deposits cambia (por Realtime)
+  useEffect(() => {
+    if (selectedDeposit && deposits && deposits.length > 0) {
+      // Buscar la versión actualizada del depósito seleccionado
+      const updatedDeposit = deposits.find((d) => d.id === selectedDeposit.id);
+
+      if (updatedDeposit) {
+        // Verificar si hay cambios reales
+        const hasChanges =
+          updatedDeposit.es_antiguo !== selectedDeposit.es_antiguo ||
+          updatedDeposit.estado !== selectedDeposit.estado ||
+          updatedDeposit.monto !== selectedDeposit.monto;
+
+        if (hasChanges) {
+          console.log(
+            "🔄 KANBAN: Actualizando selectedDeposit con datos de Realtime",
+            {
+              id: updatedDeposit.id,
+              es_antiguo_prev: selectedDeposit.es_antiguo,
+              es_antiguo_new: updatedDeposit.es_antiguo,
+              estado: updatedDeposit.estado,
+            }
+          );
+          setSelectedDeposit(updatedDeposit);
+        }
+      }
+    }
+  }, [deposits]);
+
+  // Detectar cambios de visibilidad de la página
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.log(
+          "🟢 KANBAN: Página visible - Los clicks deberían funcionar"
+        );
+      } else {
+        console.log("🔴 KANBAN: Página oculta - Inactividad detectada");
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  // Debounce search term con 300ms de delay
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const columns = [
+    { id: "pendiente", title: "Pendiente", color: "bg-orange-400" },
+    { id: "en_validacion", title: "En Validación", color: "bg-blue-400" },
+    { id: "validado", title: "Validado", color: "bg-green-400" },
+    { id: "rechazado", title: "Rechazado", color: "bg-red-400" },
+  ];
+
+  const bancosFiltrados = useMemo(() => {
+    const bancosActivos = bancos.filter((b) => b.estado === "activo");
+    if (filterEmpresa === "all") {
+      return bancosActivos;
+    }
+    const bancosDeLaEmpresa = new Set(
+      cuentas
+        .filter((c) => c.empresa_id === filterEmpresa)
+        .map((c) => c.banco_id)
+    );
+    return bancosActivos.filter((b) => bancosDeLaEmpresa.has(b.id));
+  }, [filterEmpresa, bancos, cuentas]);
+
+  const filteredDeposits = useMemo(() => {
+    if (!deposits || !Array.isArray(deposits)) {
+      return [];
+    }
+
+    const filtered = deposits.filter((deposit) => {
+      const lowerCaseSearchTerm = debouncedSearchTerm.toLowerCase();
+
+      const formattedDateTime = new Date(deposit.fecha_registro).toLocaleString(
+        "es-ES",
+        {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }
+      );
+
+      const matchesSearch =
+        !debouncedSearchTerm ||
+        (deposit.cliente &&
+          deposit.cliente.toLowerCase().includes(lowerCaseSearchTerm)) ||
+        (deposit.ruc_cliente &&
+          deposit.ruc_cliente.toLowerCase().includes(lowerCaseSearchTerm)) ||
+        (deposit.numero_operacion &&
+          deposit.numero_operacion
+            .toLowerCase()
+            .includes(lowerCaseSearchTerm)) ||
+        (deposit.sucursal?.nombre &&
+          deposit.sucursal.nombre
+            .toLowerCase()
+            .includes(lowerCaseSearchTerm)) ||
+        (deposit.banco?.abreviatura &&
+          deposit.banco.abreviatura
+            .toLowerCase()
+            .includes(lowerCaseSearchTerm)) ||
+        (deposit.trabajador?.nombre &&
+          deposit.trabajador.nombre
+            .toLowerCase()
+            .includes(lowerCaseSearchTerm)) ||
+        (deposit.moneda &&
+          deposit.moneda.toLowerCase().includes(lowerCaseSearchTerm)) ||
+        (deposit.monto &&
+          deposit.monto.toString().includes(lowerCaseSearchTerm)) ||
+        formattedDateTime.includes(lowerCaseSearchTerm);
+
+      const matchesEmpresa =
+        filterEmpresa === "all" || deposit.empresa?.id === filterEmpresa;
+      const matchesBanco =
+        filterBanco === "all" || deposit.banco?.id === filterBanco;
+
+      const matchesDate = (() => {
+        if (filterDateOption === "all") return true;
+
+        const depositDateStr = toLocalISOString(deposit.fecha_registro);
+        if (!depositDateStr) return false;
+
+        if (filterDateOption === "today") {
+          const todayStr = toLocalISOString(new Date());
+          return depositDateStr === todayStr;
+        }
+
+        if (filterDateOption === "specific" && specificDate) {
+          return depositDateStr === specificDate;
+        }
+
+        return true;
+      })();
+
+      return matchesSearch && matchesEmpresa && matchesBanco && matchesDate;
+    });
+
+    return filtered;
+  }, [
+    deposits,
+    debouncedSearchTerm,
+    filterEmpresa,
+    filterBanco,
+    filterDateOption,
+    specificDate,
+  ]);
+
+  const groupedDeposits = useMemo(() => {
+    const grouped = filteredDeposits.reduce((acc, deposit) => {
+      if (!acc[deposit.estado]) {
+        acc[deposit.estado] = [];
+      }
+      acc[deposit.estado].push(deposit);
+      return acc;
+    }, {});
+
+    // Ordenar cada grupo
+    Object.keys(grouped).forEach((estado) => {
+      grouped[estado].sort((a, b) => {
+        const dateA = new Date(a.fecha_registro);
+        const dateB = new Date(b.fecha_registro);
+
+        // Para "validado" y "rechazado": más recientes primero (descendente)
+        if (estado === "validado" || estado === "rechazado") {
+          return dateB - dateA; // Descendente: más recientes arriba
+        }
+
+        // Para "pendiente" y "en_validacion": más antiguos primero (ascendente)
+        return dateA - dateB; // Ascendente: más antiguos arriba
+      });
+    });
+
+    return grouped;
+  }, [filteredDeposits]);
+
+  // Separar depósitos en validación en normales y antiguos
+  const validacionSeparated = useMemo(() => {
+    const enValidacion = groupedDeposits["en_validacion"] || [];
+    return {
+      normales: enValidacion.filter((d) => !d.es_antiguo),
+      antiguos: enValidacion.filter((d) => d.es_antiguo),
+    };
+  }, [groupedDeposits]);
+
+  const handleCardClick = useCallback(
+    async (deposit) => {
+      console.log("👆 KANBAN: Click en card detectado", {
+        depositId: deposit.id,
+        estado: deposit.estado,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (deposit.estado === "pendiente" && currentUser) {
+        console.log("🔄 KANBAN: Es pendiente, llamando onTakeDeposit...");
+        console.log("⏳ KANBAN: Esperando respuesta del servidor...");
+
+        const startTime = Date.now();
+        const updatedDeposit = await onTakeDeposit(deposit);
+        const endTime = Date.now();
+
+        console.log(
+          `⏱️ KANBAN: onTakeDeposit completado en ${endTime - startTime}ms`
+        );
+        console.log("📦 KANBAN: Resultado de onTakeDeposit:", {
+          success: !!updatedDeposit,
+          id: updatedDeposit?.id,
+          estado: updatedDeposit?.estado,
+          validado_por: updatedDeposit?.validado_por,
+          validado_por_usuario: updatedDeposit?.validado_por_usuario,
+          tiene_validado_por_usuario: !!updatedDeposit?.validado_por_usuario,
+        });
+
+        if (updatedDeposit) {
+          console.log("✅ KANBAN: Abriendo modal con depósito actualizado");
+          setSelectedDeposit(updatedDeposit);
+        } else {
+          console.error(
+            "❌ KANBAN: onTakeDeposit devolvió null/undefined - NO SE ABRIRÁ EL MODAL"
+          );
+          alert(
+            "No se pudo tomar el depósito para validación. Revisa la consola para más detalles."
+          );
+        }
+      } else {
+        console.log(
+          "📂 KANBAN: No es pendiente o no hay usuario, abriendo directamente"
+        );
+        setSelectedDeposit(deposit);
+      }
+
+      console.log("🎬 KANBAN: Fin de handleCardClick");
+    },
+    [currentUser, onTakeDeposit]
+  );
+
+  const handleCloseModal = useCallback(() => {
+    const now = Date.now();
+    const timeSinceOpen = now - modalOpenTimeRef.current;
+
+    console.log("🚪 KANBAN: handleCloseModal llamado", {
+      timeSinceOpen,
+      modalOpenTime: modalOpenTimeRef.current,
+    });
+
+    // Ignorar cierres que ocurren menos del tiempo mínimo después de abrir
+    // Esto previene cierres accidentales/automáticos
+    if (timeSinceOpen < PERSISTENCE_CONFIG.MIN_MODAL_OPEN_TIME) {
+      console.log("⚠️ KANBAN: Cierre ignorado - modal recién abierto");
+      return;
+    }
+
+    console.log(
+      "🚪 KANBAN: Cerrando modal - el depósito mantiene su estado actual"
+    );
+
+    // Limpiar localStorage ya que el usuario cerró explícitamente el modal
+    clearOpenDepositId();
+
+    // NO regresar a pendiente - el depósito se queda en su estado actual
+    // Esto permite que los depósitos "en_validacion" permanezcan ahí aunque se cierre el modal
+
+    setSelectedDeposit(null);
+  }, []);
+
+  return (
+    <>
+      <div className="h-full p-6 flex flex-col bg-gray-50 dark:bg-gray-950">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6 flex-shrink-0">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              Kanban de Depósitos
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400">
+              Visualiza y gestiona el estado de los depósitos.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="relative">
+              <Building
+                size={12}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+              />
+              <select
+                value={filterEmpresa}
+                onChange={(e) => {
+                  setFilterEmpresa(e.target.value);
+                  setFilterBanco("all");
+                }}
+                className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+              >
+                <option value="all">Todas las Empresas</option>
+                {empresas
+                  .filter((e) => e.estado === "activo")
+                  .map((empresa) => (
+                    <option key={empresa.id} value={empresa.id}>
+                      {empresa.nombre}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="relative">
+              <CreditCard
+                size={12}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+              />
+              <select
+                value={filterBanco}
+                onChange={(e) => setFilterBanco(e.target.value)}
+                className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+              >
+                <option value="all">Todos los Bancos</option>
+                {bancosFiltrados.map((banco) => (
+                  <option key={banco.id} value={banco.id}>
+                    {banco.abreviatura}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="relative">
+              <Calendar
+                size={12}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+              />
+              <select
+                value={filterDateOption}
+                onChange={(e) => setFilterDateOption(e.target.value)}
+                className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+              >
+                <option value="all">Cualquier fecha</option>
+                <option value="today">Hoy</option>
+                <option value="specific">Fecha específica</option>
+              </select>
+            </div>
+            <AnimatePresence>
+              {filterDateOption === "specific" && (
+                <motion.div
+                  initial={{ opacity: 0, width: 0 }}
+                  animate={{ opacity: 1, width: "auto" }}
+                  exit={{ opacity: 0, width: 0 }}
+                  className="relative"
+                  transition={{ duration: 0.2 }}
+                >
+                  <input
+                    type="date"
+                    value={specificDate}
+                    onChange={(e) => setSpecificDate(e.target.value)}
+                    className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Botón Bot Off */}
+            <button
+              onClick={() => setShowBotOffModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors shadow-sm"
+              title="Ver trabajadores con bot desactivado"
+            >
+              <BotOff size={18} />
+              <span className="hidden sm:inline">Bots Off</span>
+            </button>
+
+            {/* Botón Contactos */}
+            <button
+              onClick={() => setShowContactosModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shadow-sm"
+              title="Ver todos los contactos"
+            >
+              <MessageCircle size={18} />
+              <span className="hidden sm:inline">Contactos</span>
+            </button>
+
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+              />
+              <input
+                type="text"
+                placeholder="Buscar..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full md:w-56 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+              />
+            </div>
+
+            {/* Botón para activar notificaciones */}
+          </div>
+        </div>
+
+        {/* Mobile Accordion View */}
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 lg:hidden">
+          {columns.map((column, index) => (
+            <details
+              key={column.id}
+              className="bg-gray-100/70 dark:bg-gray-900/70 rounded-xl overflow-hidden group"
+              open={index === 0}
+            >
+              <summary className="p-4 flex items-center justify-between cursor-pointer list-none">
+                <h3 className="font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${column.color}`}
+                  ></span>
+                  {column.title}
+                </h3>
+                <div className="flex items-center gap-4">
+                  <span className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1 rounded-full text-sm font-medium">
+                    {groupedDeposits[column.id]?.length || 0}
+                  </span>
+                  <ChevronRight
+                    className="transition-transform duration-200 group-open:rotate-90 text-gray-500 dark:text-gray-400"
+                    size={14}
+                  />
+                </div>
+              </summary>
+              <div className="p-3 space-y-3 border-t border-gray-200 dark:border-gray-800">
+                {/* Si es la columna "en_validacion", mostrar dos secciones */}
+                {column.id === "en_validacion" ? (
+                  <>
+                    {/* Sección: Normales */}
+                    {validacionSeparated.normales.length > 0 && (
+                      <div className="mb-4">
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => setShowNormales(!showNormales)}
+                        >
+                          <div className="flex-1 h-px bg-blue-300 dark:bg-blue-700"></div>
+                          <span className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider px-2 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full border border-blue-300 dark:border-blue-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showNormales ? "" : "-rotate-90"
+                              }`}
+                            />
+                            ✓ Normales ({validacionSeparated.normales.length})
+                          </span>
+                          <div className="flex-1 h-px bg-blue-300 dark:bg-blue-700"></div>
+                        </div>
+                        {showNormales && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={validacionSeparated.normales}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Sección: Antiguos */}
+                    {validacionSeparated.antiguos.length > 0 && (
+                      <div>
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => setShowAntiguos(!showAntiguos)}
+                        >
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                          <span className="text-xs font-bold text-orange-700 dark:text-orange-400 uppercase tracking-wider px-2 py-1 bg-orange-100 dark:bg-orange-900/30 rounded-full border border-orange-300 dark:border-orange-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showAntiguos ? "" : "-rotate-90"
+                              }`}
+                            />
+                            ⚠️ Antiguos ({validacionSeparated.antiguos.length})
+                          </span>
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                        </div>
+                        {showAntiguos && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={validacionSeparated.antiguos}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Si no hay depósitos en validación */}
+                    {validacionSeparated.antiguos.length === 0 &&
+                      validacionSeparated.normales.length === 0 && (
+                        <ColumnContent
+                          deposits={[]}
+                          onCardClick={handleCardClick}
+                        />
+                      )}
+                  </>
+                ) : (
+                  <ColumnContent
+                    deposits={groupedDeposits[column.id]}
+                    onCardClick={handleCardClick}
+                  />
+                )}
+              </div>
+            </details>
+          ))}
+        </div>
+
+        {/* Desktop Grid View */}
+        <div className="hidden lg:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 flex-1 min-h-0">
+          {columns.map((column) => (
+            <div
+              key={column.id}
+              className="bg-gray-100/70 dark:bg-gray-900 rounded-xl flex flex-col overflow-hidden"
+            >
+              <div className="p-4 flex-shrink-0 border-b border-gray-200 dark:border-gray-800">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${column.color}`}
+                    ></span>
+                    {column.title}
+                  </h3>
+                  <span className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1 rounded-full text-sm font-medium">
+                    {groupedDeposits[column.id]?.length || 0}
+                  </span>
+                </div>
+              </div>
+              <div className="flex-1 p-3 space-y-3 overflow-y-auto">
+                {/* Si es la columna "en_validacion", mostrar dos secciones */}
+                {column.id === "en_validacion" ? (
+                  <>
+                    {/* Sección: Normales */}
+                    {validacionSeparated.normales.length > 0 && (
+                      <div className="mb-4">
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => setShowNormales(!showNormales)}
+                        >
+                          <div className="flex-1 h-px bg-blue-300 dark:bg-blue-700"></div>
+                          <span className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider px-2 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full border border-blue-300 dark:border-blue-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showNormales ? "" : "-rotate-90"
+                              }`}
+                            />
+                            ✓ Normales ({validacionSeparated.normales.length})
+                          </span>
+                          <div className="flex-1 h-px bg-blue-300 dark:bg-blue-700"></div>
+                        </div>
+                        {showNormales && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={validacionSeparated.normales}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Sección: Antiguos */}
+                    {validacionSeparated.antiguos.length > 0 && (
+                      <div>
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => setShowAntiguos(!showAntiguos)}
+                        >
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                          <span className="text-xs font-bold text-orange-700 dark:text-orange-400 uppercase tracking-wider px-2 py-1 bg-orange-100 dark:bg-orange-900/30 rounded-full border border-orange-300 dark:border-orange-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showAntiguos ? "" : "-rotate-90"
+                              }`}
+                            />
+                            ⚠️ Antiguos ({validacionSeparated.antiguos.length})
+                          </span>
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                        </div>
+                        {showAntiguos && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={validacionSeparated.antiguos}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Si no hay depósitos en validación */}
+                    {validacionSeparated.antiguos.length === 0 &&
+                      validacionSeparated.normales.length === 0 && (
+                        <ColumnContent
+                          deposits={[]}
+                          onCardClick={handleCardClick}
+                        />
+                      )}
+                  </>
+                ) : (
+                  <ColumnContent
+                    deposits={groupedDeposits[column.id]}
+                    onCardClick={handleCardClick}
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <AnimatePresence>
+        {selectedDeposit && (
+          <DepositDetailModal
+            deposit={selectedDeposit}
+            onClose={handleCloseModal}
+            onUpdateDeposit={onUpdateDeposit}
+            empresas={empresas}
+            bancos={bancos}
+            cuentas={cuentas}
+            onOpenVoucherWindow={onOpenVoucherWindow}
+          />
+        )}
+        {showBotOffModal && (
+          <TrabajadoresBotOffModal onClose={() => setShowBotOffModal(false)} />
+        )}
+
+        {showContactosModal && (
+          <ContactosModal onClose={() => setShowContactosModal(false)} />
+        )}
+      </AnimatePresence>
+    </>
+  );
+};
+
+export default KanbanView;

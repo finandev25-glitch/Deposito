@@ -1,0 +1,76 @@
+# ========================================
+# CONFIGURACIÓN DE SUPABASE LOCAL
+# ========================================
+
+[api]
+# Puerto para la API REST de Supabase
+port = 54321
+
+# Esquemas expuestos a través de PostgREST
+schemas = ["public", "storage", "graphql_public"]
+
+# Configuración adicional de PostgREST
+extra_search_path = ["public", "extensions"]
+
+# Número máximo de filas que PostgREST retornará por defecto
+max_rows = 1000
+
+[db]
+# Puerto donde PostgreSQL estará disponible
+port = 54322
+
+# Configuración de PostgreSQL
+major_version = 15
+
+[studio]
+# Puerto para Supabase Studio (interfaz web)
+port = 54323
+
+[auth]
+# Puerto para el servicio de autenticación
+port = 54324
+
+# Configuración de autenticación
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["https://localhost:3000"]
+
+# Tiempo de expiración del JWT (en segundos)
+jwt_expiry = 3600
+
+# Habilitar registro de nuevos usuarios
+enable_signup = true
+
+[auth.email]
+# Habilitar confirmación de email
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+[storage]
+# Puerto para el servicio de almacenamiento
+port = 54325
+
+# Límite de tamaño de archivo (en bytes) - 50MB
+file_size_limit = "50MiB"
+
+[functions]
+# Configuración para Edge Functions (Deno)
+verify_jwt = false
+
+[realtime]
+# Puerto para el servicio de realtime
+port = 54326
+
+# IP permitidas para broadcasting
+ip_version = "ipv4"
+
+[edge_runtime]
+# Configuración del runtime de Edge Functions
+policy = "per_worker"
+
+# ========================================
+# CONFIGURACIÓN LOCAL DEVELOPMENT
+# ========================================
+[local]
+# Semilla de base de datos para desarrollo local
+# seed_path = "./supabase/seed.sql"
