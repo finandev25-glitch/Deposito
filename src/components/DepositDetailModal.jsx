@@ -1245,19 +1245,19 @@ _Mensaje automático del sistema de control de depósitos_`;
           transition={{ duration: 0.2 }}
           className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-7xl max-h-[85vh] md:max-h-[93vh] h-[85vh] md:h-[93vh] flex flex-col shadow-2xl"
         >
-          <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
-                <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+          <div className="flex items-center justify-between p-2 md:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+            <div className="flex items-center space-x-2 md:space-x-3">
+              <div className="p-1.5 md:p-2 bg-blue-100 dark:bg-blue-900/50 rounded-lg">
+                <FileText className="h-4 w-4 md:h-5 md:w-5 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                <h2 className="text-sm md:text-base font-bold text-gray-900 dark:text-gray-100">
                   Detalle del Depósito
                 </h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className="hidden md:block text-sm text-gray-500 dark:text-gray-400">
                   Operación (Voucher): {deposit.numero_operacion}
                 </p>
-                <div className="flex items-center gap-3 mt-1 text-xs">
+                <div className="hidden sm:flex items-center gap-3 mt-1 text-xs">
                   <span className="text-gray-600 dark:text-gray-400">
                     📅 Recibido:{" "}
                     <strong className="text-blue-600 dark:text-blue-400">
