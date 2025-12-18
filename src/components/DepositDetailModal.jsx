@@ -1243,7 +1243,7 @@ _Mensaje automático del sistema de control de depósitos_`;
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
           transition={{ duration: 0.2 }}
-          className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-7xl max-h-[93vh] h-[93vh] flex flex-col shadow-2xl"
+          className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-7xl max-h-[85vh] md:max-h-[93vh] h-[85vh] md:h-[93vh] flex flex-col shadow-2xl"
         >
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
             <div className="flex items-center space-x-3">
@@ -1287,11 +1287,11 @@ _Mensaje automático del sistema de control de depósitos_`;
                   <>
                     <button
                       onClick={() => setShowChatwootIframe(true)}
-                      className="flex items-center space-x-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
+                      className="flex items-center space-x-2 px-2 md:px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
                       title="Ver conversación de Chatwoot embebida"
                     >
                       <MessageSquare className="h-4 w-4" />
-                      <span>Ver Chat</span>
+                      <span className="hidden md:inline">Ver Chat</span>
                     </button>
                     <button
                       onClick={() => {
@@ -1301,11 +1301,11 @@ _Mensaje automático del sistema de control de depósitos_`;
                         );
                         window.open(chatwootUrl, "_blank");
                       }}
-                      className="flex items-center space-x-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+                      className="flex items-center space-x-2 px-2 md:px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
                       title="Abrir conversación en Chatwoot (nueva pestaña)"
                     >
                       <PanelRightOpen className="h-4 w-4" />
-                      <span>Ir al Chat</span>
+                      <span className="hidden md:inline">Ir al Chat</span>
                     </button>
                   </>
                 )}
@@ -1809,19 +1809,20 @@ _Mensaje automático del sistema de control de depósitos_`;
                         monto: editableData.monto || deposit.monto,
                       })
                     }
-                    className="px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium flex items-center justify-center space-x-2 text-sm"
+                    className="px-2 md:px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium flex items-center justify-center space-x-2 text-sm"
                     title="Abrir voucher en panel lateral y llenar extensión"
                   >
                     <PanelRightOpen size={12} />
-                    <span>Panel Lateral</span>
+                    <span className="hidden md:inline">Panel Lateral</span>
                   </button>
                 )}
                 <button
                   onClick={handleSaveChanges}
-                  className="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium flex items-center justify-center space-x-2 text-sm"
+                  className="px-3 md:px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium flex items-center justify-center space-x-2 text-sm"
                 >
                   <Save size={12} />
-                  <span>Guardar Cambios</span>
+                  <span className="hidden sm:inline">Guardar Cambios</span>
+                  <span className="sm:hidden">Guardar</span>
                 </button>
               </>
             ) : (
@@ -1842,11 +1843,11 @@ _Mensaje automático del sistema de control de depósitos_`;
                         monto: editableData.monto || deposit.monto,
                       })
                     }
-                    className="px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium flex items-center justify-center space-x-2 text-sm"
+                    className="px-2 md:px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium flex items-center justify-center space-x-2 text-sm"
                     title="Abrir voucher en panel lateral y llenar extensión"
                   >
                     <PanelRightOpen size={12} />
-                    <span>Panel Lateral</span>
+                    <span className="hidden md:inline">Panel Lateral</span>
                   </button>
                 )}
 
