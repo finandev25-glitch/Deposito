@@ -23,8 +23,8 @@ app.use('/chatwoot-api', createProxyMiddleware({
 // Servir archivos estáticos del build
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// Manejar rutas de React Router (SPA)
-app.get('*', (req, res) => {
+// Manejar rutas de React Router (SPA) - usar middleware en lugar de ruta
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
