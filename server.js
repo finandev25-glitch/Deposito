@@ -24,7 +24,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Servidor corriendo en http://0.0.0.0:${PORT}`);
   console.log(`🔗 Proxy Chatwoot: /chatwoot-api -> https://chatwoot-chatwoot.gnfcio.easypanel.host`);
 });
