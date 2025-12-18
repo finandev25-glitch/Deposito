@@ -21,7 +21,10 @@ export default defineConfig({
     }
   },
   preview: {
+    host: true,
     port: 5173,
+    strictPort: false,
+    allowedHosts: ['all'],
     proxy: {
       '/chatwoot-api': {
         target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
