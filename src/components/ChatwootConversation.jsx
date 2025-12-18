@@ -199,14 +199,14 @@ const ChatwootConversation = ({
         return;
       }
 
-      // Calcular timestamps de la última semana
+      // Calcular timestamps de hoy y ayer
       const now = new Date();
-      const oneWeekAgo = new Date(now);
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-      oneWeekAgo.setHours(0, 0, 0, 0);
-      const oneWeekAgoTimestamp = Math.floor(oneWeekAgo.getTime() / 1000);
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(0, 0, 0, 0);
+      const yesterdayTimestamp = Math.floor(yesterday.getTime() / 1000);
 
-      // Cargar todos los mensajes de la última semana usando paginación
+      // Cargar todos los mensajes de hoy y ayer usando paginación
       let allMessages = [];
       let beforeId = null;
       let hasMore = true;
@@ -228,11 +228,11 @@ const ChatwootConversation = ({
         const messagesPage = data.payload || [];
 
         if (messagesPage.length > 0) {
-          // Filtrar mensajes de la última semana
-          const recentMessages = messagesPage.filter(msg => msg.created_at >= oneWeekAgoTimestamp);
+          // Filtrar mensajes de hoy y ayer solamente
+          const recentMessages = messagesPage.filter(msg => msg.created_at >= yesterdayTimestamp);
           allMessages = allMessages.concat(recentMessages);
 
-          // Si encontramos mensajes más antiguos que la semana, detener
+          // Si encontramos mensajes más antiguos que ayer, detener
           if (recentMessages.length < messagesPage.length) {
             hasMore = false;
           } else if (messagesPage.length < 20) {
@@ -245,7 +245,7 @@ const ChatwootConversation = ({
         }
       }
 
-      console.log(`✅ Mensajes cargados (última semana): ${allMessages.length}`);
+      console.log(`✅ Mensajes cargados (hoy y ayer): ${allMessages.length}`);
 
       // Ordenar por fecha y hora de forma ascendente (del más antiguo al más reciente)
       allMessages.sort((a, b) => a.created_at - b.created_at);

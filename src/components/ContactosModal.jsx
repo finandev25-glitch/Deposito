@@ -44,13 +44,20 @@ const ContactosModal = ({ onClose }) => {
 
       if (configsError) {
         console.error("❌ Error obteniendo configuraciones:", configsError);
-        throw configsError;
+        console.error("❌ Código de error:", configsError.code);
+        console.error("❌ Mensaje:", configsError.message);
+        console.error("❌ Detalles:", configsError.details);
+        setError(`Error al obtener configuraciones de Chatwoot: ${configsError.message}. Verifica que las políticas RLS estén correctamente configuradas.`);
+        setLoading(false);
+        return;
       }
 
-      console.log(`✅ Configuraciones encontradas: ${configsData.length}`);
+      console.log(`✅ Configuraciones encontradas: ${configsData?.length || 0}`);
+      console.log("📋 Datos de configuraciones:", configsData);
 
       if (!configsData || configsData.length === 0) {
-        setError("No hay configuraciones de Chatwoot activas");
+        setError("No hay configuraciones de Chatwoot activas. Ve a Configuración → ChatWoot para crear una.");
+        setLoading(false);
         return;
       }
 
@@ -777,14 +784,86 @@ const ContactCard = ({ contacto, onOpenChat, esTrabajadorRegistrado }) => {
         </div>
       </div>
 
-      {/* Botón de chat - SIEMPRE HABILITADO */}
-      <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
+      {/* Botones de acción */}
+      <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 space-y-2">
+        {/* Botón Ver Chat en Modal */}
         <button
           onClick={() => onOpenChat(contacto)}
-          className="w-full py-2 px-3 rounded-lg text-sm font-medium transition-colors bg-blue-500 hover:bg-blue-600 text-white"
+          className="w-full py-2 px-3 rounded-lg text-sm font-medium transition-colors bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center gap-2"
         >
-          {contacto.activeConversationId ? "Abrir Chat Activo" : "Abrir Chat"}
+          <MessageCircle className="w-4 h-4" />
+          {contacto.activeConversationId ? "Ver Chat Activo" : "Ver Chat"}
         </button>
+
+        {/* Botón Abrir en Chatwoot (nueva pestaña) - Siempre visible */}
+        {contacto.contactId && (
+          <button
+            onClick={async () => {
+              try {
+                // Si tiene conversación activa, abrir esa conversación
+                if (contacto.activeConversationId) {
+                  const url = `https://chatwoot-chatwoot.gnfcio.easypanel.host/app/accounts/${contacto.chatwootAccountId}/inbox-view/conversation/${contacto.activeConversationId}`;
+                  window.open(url, "_blank");
+                  return;
+                }
+
+                // Si tiene conversaciones, abrir la primera
+                if (contacto.conversations && contacto.conversations.length > 0) {
+                  const url = `https://chatwoot-chatwoot.gnfcio.easypanel.host/app/accounts/${contacto.chatwootAccountId}/inbox-view/conversation/${contacto.conversations[0].id}`;
+                  window.open(url, "_blank");
+                  return;
+                }
+
+                // Si no tiene conversaciones, intentar obtenerlas de la API
+                const { data: configData } = await supabase
+                  .from('chatwoot_config')
+                  .select('*')
+                  .eq('id', contacto.chatwootConfigId)
+                  .single();
+
+                if (!configData) {
+                  alert('No se pudo obtener la configuración de Chatwoot');
+                  return;
+                }
+
+                const conversationsUrl = buildChatwootApiUrl(
+                  `/api/v1/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}/conversations`
+                );
+
+                const response = await fetch(conversationsUrl, {
+                  headers: getChatwootApiHeaders(configData.api_token),
+                });
+
+                if (!response.ok) {
+                  throw new Error('Error al obtener conversaciones');
+                }
+
+                const conversationsData = await response.json();
+                const conversations = conversationsData.payload || [];
+
+                if (conversations.length > 0) {
+                  // Tiene conversaciones, abrir la primera
+                  const url = `https://chatwoot-chatwoot.gnfcio.easypanel.host/app/accounts/${contacto.chatwootAccountId}/inbox-view/conversation/${conversations[0].id}`;
+                  window.open(url, "_blank");
+                } else {
+                  // No tiene conversaciones, abrir el contacto
+                  const url = `https://chatwoot-chatwoot.gnfcio.easypanel.host/app/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}`;
+                  window.open(url, "_blank");
+                }
+              } catch (error) {
+                console.error('Error al abrir Chatwoot:', error);
+                alert('Error al abrir Chatwoot. Por favor, intenta nuevamente.');
+              }
+            }}
+            className="w-full py-2 px-3 rounded-lg text-sm font-medium transition-colors bg-indigo-500 hover:bg-indigo-600 text-white flex items-center justify-center gap-2"
+            title="Abrir en Chatwoot"
+          >
+            <ExternalLink className="w-4 h-4" />
+            {(contacto.activeConversationId || (contacto.conversations && contacto.conversations.length > 0))
+              ? "Abrir Conversación"
+              : "Abrir en Chatwoot"}
+          </button>
+        )}
       </div>
     </motion.div>
   );
