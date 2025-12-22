@@ -59,6 +59,7 @@ const KanbanView = ({
   onUpdateDeposit,
   onTakeDeposit,
   onFetchDepositsByDate,
+  onSelectedDateChange,
   empresas,
   bancos,
   cuentas,
@@ -92,7 +93,7 @@ const KanbanView = ({
     console.log("🔄 KANBAN useEffect ejecutado:", {
       onFetchDepositsByDate: !!onFetchDepositsByDate,
       filterDateOption,
-      specificDate
+      specificDate,
     });
 
     if (!onFetchDepositsByDate) {
@@ -108,9 +109,22 @@ const KanbanView = ({
       console.log("🔄 KANBAN: Solicitando depósitos para hoy:", today);
       onFetchDepositsByDate(today);
     } else {
-      console.log("⚠️ KANBAN: No se cumple ninguna condición para cargar depósitos");
+      console.log(
+        "⚠️ KANBAN: No se cumple ninguna condición para cargar depósitos"
+      );
     }
   }, [specificDate, filterDateOption, onFetchDepositsByDate]);
+
+  // Notificar a App cuando cambie la fecha seleccionada
+  useEffect(() => {
+    if (onSelectedDateChange && specificDate) {
+      console.log(
+        "📅 KANBAN: Notificando cambio de fecha a App:",
+        specificDate
+      );
+      onSelectedDateChange(specificDate);
+    }
+  }, [specificDate, onSelectedDateChange]);
 
   // Mantener ref actualizada y registrar tiempo de apertura
   useEffect(() => {
@@ -258,8 +272,6 @@ const KanbanView = ({
     { id: "rechazado", title: "Rechazado", color: "bg-red-400" },
   ];
 
-
-
   const filteredDeposits = useMemo(() => {
     if (!deposits || !Array.isArray(deposits)) {
       console.log(
@@ -331,7 +343,6 @@ const KanbanView = ({
       // de la fecha específica solicitada (ver useEffect que llama onFetchDepositsByDate)
 
       return matchesSearch;
-
     });
 
     console.log(
@@ -473,7 +484,7 @@ const KanbanView = ({
               Visualiza y gestiona el estado de los depósitos.
             </p>
           </div>
-          
+
           {/* Botones Bot Off y Contactos junto al título */}
           <div className="flex items-center gap-3">
             <button
@@ -513,7 +524,7 @@ const KanbanView = ({
               <option value="specific">Fecha específica</option>
             </select>
           </div>
-          
+
           <AnimatePresence>
             {filterDateOption === "specific" && (
               <motion.div

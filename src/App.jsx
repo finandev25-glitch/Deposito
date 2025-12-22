@@ -90,6 +90,9 @@ function App() {
   const [deposits, setDeposits] = useState([]);
   const [personal, setPersonal] = useState([]);
 
+  // Estado para la fecha seleccionada actualmente en KanbanView
+  const [currentSelectedDate, setCurrentSelectedDate] = useState(null);
+
   // Estados de carga y error para los datos principales
   const [appDataLoading, setAppDataLoading] = useState(true);
   const [appDataError, setAppDataError] = useState(null);
@@ -271,18 +274,34 @@ function App() {
 
     try {
       console.log("🔄 Refrescando depósitos...");
-      const { data, error } = await supabase
-        .from("depositos")
-        .select(DEPOSIT_FULL_QUERY_STRING)
-        .order("fecha_registro", { ascending: false });
 
-      if (error) {
-        console.error("❌ Error refrescando depósitos:", error);
-        return;
+      // Si hay una fecha seleccionada actualmente, filtrar por esa fecha
+      if (currentSelectedDate) {
+        console.log(
+          "📅 Refrescando depósitos para fecha específica:",
+          currentSelectedDate
+        );
+        const { data, error } = await supabase
+          .from("depositos")
+          .select(DEPOSIT_FULL_QUERY_STRING)
+          .eq("fecha_solo_date", currentSelectedDate)
+          .order("fecha_registro", { ascending: false });
+
+        if (error) {
+          console.error("❌ Error refrescando depósitos:", error);
+          return;
+        }
+
+        setDeposits(data || []);
+        console.log(
+          "✅ Depósitos refrescados exitosamente para fecha:",
+          currentSelectedDate,
+          "- Cantidad:",
+          data?.length || 0
+        );
+      } else {
+        console.log("⚠️ No hay fecha seleccionada, no se refrescan depósitos");
       }
-
-      setDeposits(data || []);
-      console.log("✅ Depósitos refrescados exitosamente");
     } catch (error) {
       console.error("💥 Error crítico refrescando depósitos:", error);
     }
@@ -397,6 +416,12 @@ function App() {
     [supabase, currentUser, isSupabaseConnected]
   );
 
+  // Callback para que KanbanView informe cuando cambia la fecha seleccionada
+  const handleSelectedDateChange = useCallback((fecha) => {
+    console.log("📅 App: Fecha seleccionada cambió a:", fecha);
+    setCurrentSelectedDate(fecha);
+  }, []);
+
   // Carga inicial
   useEffect(() => {
     console.log("🔍 Verificando estado de carga...", {
@@ -480,10 +505,14 @@ function App() {
         wasHidden = true;
         hasReloadedRef.current = false;
         console.log("👋 Página se ocultó");
-      } else if (document.visibilityState === "visible" && wasHidden && !hasReloadedRef.current) {
+      } else if (
+        document.visibilityState === "visible" &&
+        wasHidden &&
+        !hasReloadedRef.current
+      ) {
         console.log("👀 Página visible nuevamente - RECARGANDO!");
         hasReloadedRef.current = true;
-        
+
         setTimeout(() => {
           console.log("🔄 Ejecutando window.location.reload()...");
           window.location.reload();
@@ -557,7 +586,9 @@ function App() {
                 );
 
                 // Recargar depósitos para obtener el nuevo depósito con todas sus relaciones
-                console.log("🔄 REALTIME: Llamando refreshDeposits para INSERT...");
+                console.log(
+                  "🔄 REALTIME: Llamando refreshDeposits para INSERT..."
+                );
                 refreshDeposits();
                 break;
 
@@ -570,7 +601,9 @@ function App() {
                 // Obtener el depósito completo con todas las relaciones
                 (async () => {
                   try {
-                    console.log("📡 REALTIME: Consultando depósito completo...");
+                    console.log(
+                      "📡 REALTIME: Consultando depósito completo..."
+                    );
                     const { data: fullDeposit, error } = await supabase
                       .from("depositos")
                       .select(DEPOSIT_FULL_QUERY_STRING)
@@ -589,7 +622,9 @@ function App() {
                         error
                       );
                       // Fallback: actualizar solo con los datos básicos
-                      console.log("⚠️ REALTIME: Usando fallback con datos básicos");
+                      console.log(
+                        "⚠️ REALTIME: Usando fallback con datos básicos"
+                      );
                       setDeposits((prev) =>
                         prev.map((dep) =>
                           dep.id === payload.new.id
@@ -608,7 +643,9 @@ function App() {
                         }
                       );
                       // Actualizar con el depósito completo que incluye las relaciones
-                      console.log("🔄 REALTIME: Actualizando estado deposits...");
+                      console.log(
+                        "🔄 REALTIME: Actualizando estado deposits..."
+                      );
                       setDeposits((prev) => {
                         const updated = prev.map((dep) =>
                           dep.id === payload.new.id ? fullDeposit : dep
@@ -617,7 +654,9 @@ function App() {
                         return updated;
                       });
                     } else {
-                      console.warn("⚠️ REALTIME: No hay data ni error - caso inesperado");
+                      console.warn(
+                        "⚠️ REALTIME: No hay data ni error - caso inesperado"
+                      );
                     }
                   } catch (err) {
                     console.error("💥 REALTIME: Error inesperado:", err);
@@ -663,7 +702,6 @@ function App() {
       supabase.removeChannel(channel);
     };
   }, [isSupabaseConnected, currentUser]);
-
 
   const depositsWithFullData = useMemo(() => {
     if (!deposits) return [];
@@ -1288,6 +1326,7 @@ function App() {
                     onUpdateDeposit={handleUpdateDeposit}
                     onTakeDeposit={handleTakeDepositForValidation}
                     onFetchDepositsByDate={fetchDepositsByDate}
+                    onSelectedDateChange={handleSelectedDateChange}
                     empresas={empresas}
                     bancos={bancos}
                     cuentas={cuentas}
