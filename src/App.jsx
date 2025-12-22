@@ -1391,6 +1391,8 @@ function App() {
                   <TableView
                     deposits={depositsWithFullData}
                     onUpdateDeposit={handleUpdateDeposit}
+                    onFetchDepositsByDate={fetchDepositsByDate}
+                    onSelectedDateChange={handleSelectedDateChange}
                     empresas={empresas}
                     bancos={bancos}
                     cuentas={cuentas}

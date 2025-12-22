@@ -21,6 +21,8 @@ import {
 const TableView = ({
   deposits,
   onUpdateDeposit,
+  onFetchDepositsByDate,
+  onSelectedDateChange,
   empresas,
   bancos,
   cuentas,
@@ -134,11 +136,14 @@ const TableView = ({
 
     // Filtro por fecha específica
     if (specificDate) {
+      console.log("📅 TABLE: Aplicando filtro por fecha:", specificDate);
       filtered = filtered.filter((deposit) => {
         if (!deposit.fecha_solo_date) return false;
-        // Usar fecha_solo_date que ya está en formato YYYY-MM-DD
         return deposit.fecha_solo_date === specificDate;
       });
+      console.log(
+        `✅ TABLE: ${filtered.length} de ${deposits.length} depósitos filtrados`
+      );
     }
 
     setFilteredDeposits(filtered);
@@ -446,9 +451,23 @@ const TableView = ({
                 type="date"
                 value={specificDate}
                 onChange={(e) => {
-                  setSpecificDate(e.target.value);
+                  const newDate = e.target.value;
+                  console.log("📅 TABLE: Usuario seleccionó fecha:", newDate);
+                  setSpecificDate(newDate);
+
+                  // Comunicar el cambio de fecha a App.jsx
+                  if (newDate && onFetchDepositsByDate) {
+                    console.log(
+                      "📅 TABLE: Solicitando depósitos por fecha a App.jsx"
+                    );
+                    onFetchDepositsByDate(newDate);
+                  }
+                  if (newDate && onSelectedDateChange) {
+                    onSelectedDateChange(newDate);
+                  }
+
                   // Resetear el filtro de período cuando se selecciona una fecha específica
-                  if (e.target.value) {
+                  if (newDate) {
                     setFilterPeriod("all");
                   }
                 }}
