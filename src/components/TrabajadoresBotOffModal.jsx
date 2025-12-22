@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../supabaseClient";
+import { chatwootService } from "../services/chatwootService";
 import {
   buildChatwootApiUrl,
   getChatwootApiHeaders,
@@ -83,21 +84,22 @@ const TrabajadoresBotOffModal = ({ onClose }) => {
           for (let page = 1; page <= maxPages; page++) {
             // Endpoint de CONTACTOS según documentación Chatwoot
             // GET /api/v1/accounts/{account_id}/contacts
-            const apiUrl = buildChatwootApiUrl(
-              `/api/v1/accounts/${config.account_id}/contacts?page=${page}`
-            );
+            const endpoint = `/api/v1/accounts/${config.account_id}/contacts?page=${page}`;
 
-            const headers = getChatwootApiHeaders(config.api_token);
-            const response = await fetch(apiUrl, { headers });
+            // Usar Edge Function en lugar de fetch directo
+            const result = await chatwootService.getChatwootData({
+              configId: config.id,
+              endpoint: endpoint
+            });
 
-            if (!response.ok) {
+            if (!result.success) {
               console.warn(
-                `⚠️ Error en ${config.nombre} página ${page}: ${response.status}`
+                `⚠️ Error en ${config.nombre} página ${page}: ${result.message}`
               );
               break;
             }
 
-            const contactsData = await response.json();
+            const contactsData = result.data;
 
             // Logging solo en primera página
             if (page === 1) {
@@ -202,24 +204,23 @@ const TrabajadoresBotOffModal = ({ onClose }) => {
             continue;
           }
 
-          // Obtener conversaciones del contacto
-          const conversationsUrl = buildChatwootApiUrl(
-            `/api/v1/accounts/${contactConfig.account_id}/contacts/${contact.id}/conversations`
-          );
+          // Obtener conversaciones del contacto usando Edge Function
+          const endpoint = `/api/v1/accounts/${contactConfig.account_id}/contacts/${contact.id}/conversations`;
 
           console.log("📞 Consultando conversaciones para contacto:", {
             contactId: contact.id,
             contactName: contact.name,
-            url: conversationsUrl,
+            endpoint: endpoint,
           });
 
-          const conversationsResponse = await fetch(conversationsUrl, {
-            headers: getChatwootApiHeaders(contactConfig.api_token),
+          const conversationsResult = await chatwootService.getChatwootData({
+            configId: contactConfig.id,
+            endpoint: endpoint
           });
 
           let conversations = [];
-          if (conversationsResponse.ok) {
-            const conversationsData = await conversationsResponse.json();
+          if (conversationsResult.success) {
+            const conversationsData = conversationsResult.data;
             conversations = Array.isArray(conversationsData)
               ? conversationsData
               : conversationsData.payload || conversationsData.data || [];
@@ -235,8 +236,7 @@ const TrabajadoresBotOffModal = ({ onClose }) => {
           } else {
             console.warn("⚠️ Error obteniendo conversaciones:", {
               contactId: contact.id,
-              status: conversationsResponse.status,
-              statusText: conversationsResponse.statusText,
+              error: conversationsResult.message
             });
           }
 
