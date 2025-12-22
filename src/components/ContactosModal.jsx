@@ -71,9 +71,9 @@ const ContactosModal = ({ onClose }) => {
         );
 
         try {
-          // Obtener contactos con paginación (hasta 3 páginas para carga rápida)
+          // Obtener contactos con paginación (hasta 10 páginas para obtener todos)
           let configContacts = [];
-          const maxPages = 3; // Reducido de 10 a 3 para carga más rápida
+          const maxPages = 10;
 
           for (let page = 1; page <= maxPages; page++) {
             const endpoint = `/api/v1/accounts/${config.account_id}/contacts?page=${page}`;
