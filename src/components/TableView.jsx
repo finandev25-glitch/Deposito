@@ -135,10 +135,9 @@ const TableView = ({
     // Filtro por fecha específica
     if (specificDate) {
       filtered = filtered.filter((deposit) => {
-        if (!deposit.fecha_registro) return false;
-        // Extraer solo la parte de la fecha (YYYY-MM-DD) sin hora
-        const depositDateOnly = deposit.fecha_registro.split("T")[0];
-        return depositDateOnly === specificDate;
+        if (!deposit.fecha_solo_date) return false;
+        // Usar fecha_solo_date que ya está en formato YYYY-MM-DD
+        return deposit.fecha_solo_date === specificDate;
       });
     }
 
