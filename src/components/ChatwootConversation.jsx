@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Send, X, Loader2, User, Bot, Reply } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useChatwootConfig } from "../hooks/useChatwootConfig";
+import { chatwootService } from "../services/chatwootService";
 import {
   buildChatwootApiUrl,
   getChatwootApiHeaders,
@@ -120,33 +121,19 @@ const ChatwootConversation = ({
         return;
       }
 
-      console.log("🔄 Iniciando fetch de detalles de conversación...");
-      const apiUrl = buildChatwootApiUrl(
-        `/api/v1/accounts/${chatwootConfig.account_id}/conversations/${conversationId}`
-      );
+      console.log("🔄 Iniciando fetch de detalles de conversación via Edge Function...");
 
-      console.log("📡 Haciendo fetch a:", apiUrl);
-      const headers = getChatwootApiHeaders(chatwootConfig.api_token);
-      console.log("📋 Headers:", headers);
-
-      const response = await fetch(apiUrl, { headers });
-
-      console.log("📥 Respuesta recibida:", {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok,
-        url: response.url,
+      // Usar Edge Function en lugar de fetch directo
+      const result = await chatwootService.getChatwootData({
+        configId: chatwootConfig.id,
+        endpoint: `/api/v1/accounts/${chatwootConfig.account_id}/conversations/${conversationId}`
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("❌ Error en respuesta:", errorText);
-        throw new Error(
-          `Error ${response.status}: ${response.statusText} - ${errorText}`
-        );
+      if (!result.success) {
+        throw new Error(result.message || 'Error obteniendo detalles de conversación');
       }
 
-      const data = await response.json();
+      const data = result.data;
       console.log("✅ Detalles de conversación obtenidos:", data);
 
       // Extraer el contact_id y el estado actual del atributo bot
@@ -212,19 +199,19 @@ const ChatwootConversation = ({
       let hasMore = true;
 
       while (hasMore) {
-        const apiUrl = buildChatwootApiUrl(
-          `/api/v1/accounts/${chatwootConfig.account_id}/conversations/${conversationId}/messages${beforeId ? `?before=${beforeId}` : ''}`
-        );
+        // Usar Edge Function en lugar de fetch directo
+        const endpoint = `/api/v1/accounts/${chatwootConfig.account_id}/conversations/${conversationId}/messages${beforeId ? `?before=${beforeId}` : ''}`;
 
-        const response = await fetch(apiUrl, {
-          headers: getChatwootApiHeaders(chatwootConfig.api_token),
+        const result = await chatwootService.getChatwootData({
+          configId: chatwootConfig.id,
+          endpoint: endpoint
         });
 
-        if (!response.ok) {
-          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        if (!result.success) {
+          throw new Error(result.message || 'Error obteniendo mensajes');
         }
 
-        const data = await response.json();
+        const data = result.data;
         const messagesPage = data.payload || [];
 
         if (messagesPage.length > 0) {
@@ -264,21 +251,20 @@ const ChatwootConversation = ({
     if (!chatwootConfig || !contactIdParam) return;
 
     try {
-      const apiUrl = buildChatwootApiUrl(
-        `/api/v1/accounts/${chatwootConfig.account_id}/contacts/${contactIdParam}`
-      );
-      const response = await fetch(apiUrl, {
-        method: "PUT",
-        headers: getChatwootApiHeaders(chatwootConfig.api_token),
-        body: JSON.stringify({
+      // Usar Edge Function en lugar de fetch directo
+      const result = await chatwootService.getChatwootData({
+        configId: chatwootConfig.id,
+        endpoint: `/api/v1/accounts/${chatwootConfig.account_id}/contacts/${contactIdParam}`,
+        method: 'PUT',
+        body: {
           custom_attributes: {
             bot: botValue,
           },
-        }),
+        }
       });
 
-      if (!response.ok) {
-        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      if (!result.success) {
+        throw new Error(result.message || 'Error actualizando atributo bot');
       }
 
       console.log(
@@ -294,21 +280,20 @@ const ChatwootConversation = ({
 
     setUpdatingBot(true);
     try {
-      const apiUrl = buildChatwootApiUrl(
-        `/api/v1/accounts/${chatwootConfig.account_id}/contacts/${contactId}`
-      );
-      const response = await fetch(apiUrl, {
-        method: "PUT",
-        headers: getChatwootApiHeaders(chatwootConfig.api_token),
-        body: JSON.stringify({
+      // Usar Edge Function en lugar de fetch directo
+      const result = await chatwootService.getChatwootData({
+        configId: chatwootConfig.id,
+        endpoint: `/api/v1/accounts/${chatwootConfig.account_id}/contacts/${contactId}`,
+        method: 'PUT',
+        body: {
           custom_attributes: {
             bot: newValue ? "On" : "Off",
           },
-        }),
+        }
       });
 
-      if (!response.ok) {
-        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      if (!result.success) {
+        throw new Error(result.message || 'Error actualizando atributo bot');
       }
 
       setBotEnabled(newValue);

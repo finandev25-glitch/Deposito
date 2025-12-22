@@ -1,4 +1,11 @@
-import React, { useState, useContext, useEffect, useMemo, useRef } from "react";
+import React, {
+  useState,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
 import {
   Routes,
   Route,
@@ -37,8 +44,8 @@ import {
 } from "./utils/mockData";
 import { Loader2, XCircle } from "lucide-react";
 
-const DEPOSIT_FULL_QUERY_STRING = `
-  id, numero_operacion, cliente, monto, fecha_registro, imagen_voucher, anexo, numero_operacion_banco, fecha_deposito, estado, observaciones, motivo_rechazo, fecha_validacion, referencia_cliente, validado_por, moneda, ruc_cliente, telefono_origen, chatwoot_conversation_id, chatwoot_config_id, chatwoot_message_id, es_antiguo,
+export const DEPOSIT_FULL_QUERY_STRING = `
+  id, numero_operacion, cliente, monto, fecha_registro, fecha_solo_date, imagen_voucher, anexo, numero_operacion_banco, fecha_deposito, estado, observaciones, motivo_rechazo, fecha_validacion, referencia_cliente, validado_por, moneda, ruc_cliente, telefono_origen, chatwoot_conversation_id, chatwoot_config_id, chatwoot_message_id, es_antiguo,
   empresa:empresa_id (id, nombre, estado, abreviatura),
   banco:banco_id (id, abreviatura, estado),
   sucursal:sucursal_id (id, nombre),
@@ -55,6 +62,7 @@ function App() {
 
   // Variable para controlar si la carga inicial se completó (persiste entre renders)
   const initialLoadCompleteRef = useRef(false);
+  const lastLocationRef = useRef(location.pathname);
 
   // Estados relacionados con reconexión eliminados - ahora se recarga la página directamente
 
@@ -87,13 +95,6 @@ function App() {
   const [appDataError, setAppDataError] = useState(null);
 
   const isSupabaseConnected = supabase && currentUser;
-
-  // Estados para control de Realtime
-  const [realtimeErrors, setRealtimeErrors] = useState(0);
-  const [realtimeStatus, setRealtimeStatus] = useState(null);
-  const [lastReconnectAttempt, setLastReconnectAttempt] = useState(0);
-  const RECONNECT_COOLDOWN = 30000; // 30 segundos entre reconexiones
-  const MAX_REALTIME_ERRORS = 5; // Máximo 5 errores antes de pausar
 
   // Función centralizada para cargar datos
   const fetchData = async (isBackground = false) => {
@@ -134,10 +135,9 @@ function App() {
             .from("sucursales")
             .select("*")
             .order("nombre", { ascending: true }),
-          supabase
-            .from("depositos")
-            .select(DEPOSIT_FULL_QUERY_STRING)
-            .order("fecha_registro", { ascending: false }),
+          // NO cargar depósitos en la carga inicial
+          // Los depósitos se cargarán mediante fetchDepositsByDate cuando el usuario seleccione una fecha
+          Promise.resolve({ data: [], error: null }),
           supabase.from("sucursal_personal").select("*"),
         ];
 
@@ -175,13 +175,31 @@ function App() {
           allKeys: firstDeposit ? Object.keys(firstDeposit) : [],
         });
 
+        // Log de depósitos cargados
+        const deposits = depositsRes.data || [];
+        console.log(`📊 Depósitos cargados: ${deposits.length}`);
+        if (deposits.length > 0) {
+          const fechas = deposits.map((d) => d.fecha_registro).filter((f) => f);
+          const fechaMin = Math.min(
+            ...fechas.map((f) => new Date(f).getTime())
+          );
+          const fechaMax = Math.max(
+            ...fechas.map((f) => new Date(f).getTime())
+          );
+          console.log(
+            `📅 Rango de fechas: ${
+              new Date(fechaMin).toISOString().split("T")[0]
+            } a ${new Date(fechaMax).toISOString().split("T")[0]}`
+          );
+        }
+
         // Si todo va bien, actualizamos los estados
         // React hará batching de estas actualizaciones
         setBancos(bancosRes.data || []);
         setEmpresas(empresasRes.data || []);
         setCuentas(cuentasRes.data || []);
         setSucursales(sucursalesRes.data || []);
-        setDeposits(depositsRes.data || []);
+        setDeposits(deposits);
         setPersonal(personalRes.data || []);
 
         console.log("✅ Datos actualizados exitosamente");
@@ -199,7 +217,7 @@ function App() {
             s.personal.map((p) => ({ ...p, sucursal_id: s.id }))
           );
           setPersonal(mockPersonal);
-          setDeposits(generateMockDeposits(50, mockPersonal, initialUsers));
+          setDeposits(generateMockDeposits(200, mockPersonal, initialUsers)); // Aumentar significativamente los datos de prueba
         }
       }
     } catch (error) {
@@ -270,49 +288,242 @@ function App() {
     }
   };
 
+  // Función para cargar depósitos por fecha específica (memoizada con useCallback)
+  const fetchDepositsByDate = useCallback(
+    async (fecha) => {
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log("🎬 fetchDepositsByDate INICIADA para fecha:", fecha);
+      console.log("🕐 Timestamp:", new Date().toISOString());
+      console.log("🔍 Estado de conexión:", {
+        supabase: !!supabase,
+        currentUser: !!currentUser,
+        isSupabaseConnected,
+      });
+
+      if (!supabase || !currentUser || !isSupabaseConnected) {
+        console.log("⚠️ No se puede cargar depósitos - falta conexión");
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        return;
+      }
+
+      try {
+        console.log(`🔄 PASO 1: Iniciando consulta a BD para fecha: ${fecha}`);
+        console.log(`📝 Query: depositos where fecha_solo_date = '${fecha}'`);
+        console.log(
+          `⏱️ Antes de ejecutar query - Timestamp:`,
+          new Date().toISOString()
+        );
+
+        // Crear una Promise con timeout para detectar queries que se cuelgan
+        console.log("🔄 Ejecutando query completa con todos los datos...");
+        const queryPromise = supabase
+          .from("depositos")
+          .select(DEPOSIT_FULL_QUERY_STRING, {
+            count: "exact",
+          })
+          .eq("fecha_solo_date", fecha)
+          .order("fecha_registro", { ascending: false });
+
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(
+            () => reject(new Error("Query timeout después de 30 segundos")),
+            30000
+          );
+        });
+
+        console.log("⏳ Esperando respuesta de Supabase...");
+        const { data, error, count } = await Promise.race([
+          queryPromise,
+          timeoutPromise,
+        ]);
+
+        console.log("📡 PASO 2: Respuesta recibida de Supabase");
+        console.log(
+          `⏱️ Después de recibir respuesta - Timestamp:`,
+          new Date().toISOString()
+        );
+
+        if (error) {
+          console.error("❌ PASO 3: Error cargando depósitos:", error);
+          console.error("❌ Detalles del error:", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          });
+          console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+          return;
+        }
+
+        console.log(
+          `✅ PASO 3: Depósitos cargados: ${
+            data?.length || 0
+          } registros (count: ${count})`
+        );
+        if (data && data.length > 0) {
+          console.log("📊 Primer depósito:", {
+            id: data[0].id,
+            fecha_solo_date: data[0].fecha_solo_date,
+            cliente: data[0].cliente,
+            numero_operacion: data[0].numero_operacion,
+            monto: data[0].monto,
+            estado: data[0].estado,
+            empresa: data[0].empresa?.nombre,
+            banco: data[0].banco?.abreviatura,
+          });
+        } else {
+          console.warn(
+            "⚠️ La consulta retornó 0 depósitos para la fecha:",
+            fecha
+          );
+        }
+
+        console.log(
+          "💾 PASO 4: Actualizando estado deposits con",
+          data?.length || 0,
+          "registros"
+        );
+        setDeposits(data || []);
+        console.log("✅ PASO 5: Estado actualizado correctamente");
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      } catch (error) {
+        console.error("💥 Error crítico cargando depósitos:", error);
+        console.error("💥 Stack:", error.stack);
+        console.error("💥 Nombre:", error.name);
+        console.error("💥 Mensaje:", error.message);
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      }
+    },
+    [supabase, currentUser, isSupabaseConnected]
+  );
+
   // Carga inicial
   useEffect(() => {
-    // Prevenir doble carga en StrictMode
-    if (initialLoadCompleteRef.current) {
-      console.log("⚠️ Carga inicial ya completada, saltando...");
+    console.log("🔍 Verificando estado de carga...", {
+      currentUser: !!currentUser,
+      isSupabaseConnected,
+      pathname: location.pathname,
+      lastLocation: lastLocationRef.current,
+    });
+
+    if (!currentUser || !isSupabaseConnected) {
+      setAppDataLoading(false);
       return;
     }
 
-    if (currentUser) {
-      console.log("🔄 Ejecutando carga inicial de datos...");
+    // Detectar si volvimos a la página principal desde otra página
+    const returnedToMainPage =
+      location.pathname === "/" &&
+      lastLocationRef.current !== "/" &&
+      lastLocationRef.current !== null;
+    const isFirstLoad = !initialLoadCompleteRef.current;
+
+    if (isFirstLoad || returnedToMainPage) {
+      console.log(
+        returnedToMainPage
+          ? "🏠 REGRESANDO a página principal - FORZANDO RECARGA..."
+          : "🔄 PRIMERA CARGA - Ejecutando carga inicial..."
+      );
       initialLoadCompleteRef.current = true;
       fetchData(false);
-    } else {
-      setAppDataLoading(false);
     }
+
+    // Actualizar la referencia de ubicación
+    lastLocationRef.current = location.pathname;
+  }, [currentUser, isSupabaseConnected, location.pathname]);
+
+  // � Efecto para refrescar datos cuando vuelves a la página principal
+  useEffect(() => {
+    // Si estás en la página principal y hay usuario, asegurar que los datos están cargados
+    if (location.pathname === "/" && currentUser && !appDataLoading) {
+      console.log("🏠 Volviendo a la página principal - verificando datos...");
+      if (deposits.length === 0 && bancos.length === 0) {
+        console.log("📊 No hay datos cargados - ejecutando recarga...");
+        fetchData(false);
+      }
+    }
+  }, [
+    location.pathname,
+    currentUser,
+    appDataLoading,
+    deposits.length,
+    bancos.length,
+  ]);
+
+  // 🔄 Efecto adicional para asegurar recarga inmediata al volver a la página principal
+  useEffect(() => {
+    if (location.pathname === "/" && currentUser && isSupabaseConnected) {
+      console.log("🏠 DETECTADO: Navegación a página principal");
+      // Forzar recarga después de un breve delay
+      const timeoutId = setTimeout(() => {
+        console.log(
+          "🔄 EJECUTANDO: Recarga forzada al volver a página principal"
+        );
+        fetchData(false);
+      }, 200);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [location.pathname, currentUser, isSupabaseConnected]);
+
+  // 👁️ Detectar cuando el usuario regresa a la pestaña y recargar automáticamente
+  // Solución al problema conocido de Supabase con pestañas inactivas
+  useEffect(() => {
+    if (!currentUser || !isSupabaseConnected) return;
+
+    const hasReloadedRef = { current: false };
+    let wasHidden = false;
+
+    const handleVisibilityChange = () => {
+      console.log("🔍 VISIBILIDAD CAMBIÓ:", document.visibilityState);
+
+      if (document.visibilityState === "hidden") {
+        wasHidden = true;
+        hasReloadedRef.current = false;
+        console.log("👋 Página se ocultó");
+      } else if (document.visibilityState === "visible" && wasHidden && !hasReloadedRef.current) {
+        console.log("👀 Página visible nuevamente - RECARGANDO!");
+        hasReloadedRef.current = true;
+        
+        setTimeout(() => {
+          console.log("🔄 Ejecutando window.location.reload()...");
+          window.location.reload();
+        }, 300);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    console.log("✅ Listener de visibilidad instalado");
+
+    return () => {
+      console.log("🧹 Limpiando listener de visibilidad");
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [currentUser, isSupabaseConnected]);
 
-  // 🔴 Suscripción a cambios en tiempo real (Realtime)
+  useEffect(() => {
+    // DESHABILITADO: No queremos polling automático
+    // if (!currentUser || !isSupabaseConnected || location.pathname !== "/")
+    //   return;
+    // console.log("INICIANDO polling cada 30 segundos en página principal...");
+    // const interval = setInterval(() => {
+    //   if (document.visibilityState === "visible") {
+    //     console.log("POLLING: Refrescando datos automáticamente...");
+    //     fetchData(false);
+    //   }
+    // }, 30000); // Cada 30 segundos
+    // return () => {
+    //   console.log("DETENIENDO polling...");
+    //   clearInterval(interval);
+    // };
+  }, [currentUser, isSupabaseConnected, location.pathname]);
+
+  // �🔴 Suscripción a cambios en tiempo real (Realtime)
   useEffect(() => {
     if (!isSupabaseConnected || !supabase || !currentUser) {
       console.log(
         "⚠️ REALTIME: No se puede suscribir (falta conexión o usuario)"
       );
       return;
-    }
-
-    // Si hay demasiados errores, pausar por un tiempo
-    if (realtimeErrors >= MAX_REALTIME_ERRORS) {
-      const now = Date.now();
-      if (now - lastReconnectAttempt < RECONNECT_COOLDOWN) {
-        console.log(
-          `⏳ REALTIME: Demasiados errores (${realtimeErrors}), esperando ${Math.round(
-            (RECONNECT_COOLDOWN - (now - lastReconnectAttempt)) / 1000
-          )}s antes de reintentar`
-        );
-        return;
-      } else {
-        console.log(
-          "🔄 REALTIME: Reiniciando contador de errores después del cooldown"
-        );
-        setRealtimeErrors(0);
-        setLastReconnectAttempt(now);
-      }
     }
 
     console.log("🔴 REALTIME: Iniciando suscripción a cambios en depositos...");
@@ -345,8 +556,9 @@ function App() {
                   payload.new.estado
                 );
 
-                // Recargar datos para obtener el depósito completo con relaciones
-                fetchData(true);
+                // Recargar depósitos para obtener el nuevo depósito con todas sus relaciones
+                console.log("🔄 REALTIME: Llamando refreshDeposits para INSERT...");
+                refreshDeposits();
                 break;
 
               case "UPDATE":
@@ -358,31 +570,54 @@ function App() {
                 // Obtener el depósito completo con todas las relaciones
                 (async () => {
                   try {
+                    console.log("📡 REALTIME: Consultando depósito completo...");
                     const { data: fullDeposit, error } = await supabase
                       .from("depositos")
                       .select(DEPOSIT_FULL_QUERY_STRING)
                       .eq("id", payload.new.id)
                       .single();
 
+                    console.log("📦 REALTIME: Respuesta de query:", {
+                      hasData: !!fullDeposit,
+                      hasError: !!error,
+                      depositId: payload.new.id,
+                    });
+
                     if (error) {
-                      console.error("❌ REALTIME: Error obteniendo depósito completo:", error);
+                      console.error(
+                        "❌ REALTIME: Error obteniendo depósito completo:",
+                        error
+                      );
                       // Fallback: actualizar solo con los datos básicos
+                      console.log("⚠️ REALTIME: Usando fallback con datos básicos");
                       setDeposits((prev) =>
                         prev.map((dep) =>
-                          dep.id === payload.new.id ? { ...dep, ...payload.new } : dep
+                          dep.id === payload.new.id
+                            ? { ...dep, ...payload.new }
+                            : dep
                         )
                       );
                     } else if (fullDeposit) {
-                      console.log("✅ REALTIME: Depósito completo obtenido con relaciones:", {
-                        id: fullDeposit.id,
-                        validado_por_usuario: fullDeposit.validado_por_usuario,
-                      });
-                      // Actualizar con el depósito completo que incluye las relaciones
-                      setDeposits((prev) =>
-                        prev.map((dep) =>
-                          dep.id === payload.new.id ? fullDeposit : dep
-                        )
+                      console.log(
+                        "✅ REALTIME: Depósito completo obtenido con relaciones:",
+                        {
+                          id: fullDeposit.id,
+                          estado: fullDeposit.estado,
+                          validado_por_usuario:
+                            fullDeposit.validado_por_usuario,
+                        }
                       );
+                      // Actualizar con el depósito completo que incluye las relaciones
+                      console.log("🔄 REALTIME: Actualizando estado deposits...");
+                      setDeposits((prev) => {
+                        const updated = prev.map((dep) =>
+                          dep.id === payload.new.id ? fullDeposit : dep
+                        );
+                        console.log("✅ REALTIME: Estado actualizado");
+                        return updated;
+                      });
+                    } else {
+                      console.warn("⚠️ REALTIME: No hay data ni error - caso inesperado");
                     }
                   } catch (err) {
                     console.error("💥 REALTIME: Error inesperado:", err);
@@ -411,27 +646,13 @@ function App() {
       )
       .subscribe((status) => {
         console.log("🔔 REALTIME: Estado de suscripción:", status);
-        setRealtimeStatus(status);
 
         if (status === "SUBSCRIBED") {
           console.log("✅ REALTIME: Suscripción activa");
-          // Reset contador de errores cuando se conecta exitosamente
-          setRealtimeErrors(0);
         } else if (status === "CHANNEL_ERROR") {
           console.error("❌ REALTIME: Error en el canal");
-          setRealtimeErrors((prev) => {
-            const newCount = prev + 1;
-            console.log(`📊 Error ${newCount}/${MAX_REALTIME_ERRORS}`);
-            return newCount;
-          });
-          setLastReconnectAttempt(Date.now());
         } else if (status === "TIMED_OUT") {
           console.error("⏱️ REALTIME: Timeout de conexión");
-          setRealtimeErrors((prev) => {
-            const newCount = prev + 1;
-            console.log(`📊 Timeout ${newCount}/${MAX_REALTIME_ERRORS}`);
-            return newCount;
-          });
         } else if (status === "CLOSED") {
           console.log("🔒 REALTIME: Canal cerrado");
         }
@@ -441,32 +662,8 @@ function App() {
       console.log("🧹 REALTIME: Limpiando suscripción");
       supabase.removeChannel(channel);
     };
-  }, [isSupabaseConnected, currentUser, realtimeErrors, lastReconnectAttempt]);
+  }, [isSupabaseConnected, currentUser]);
 
-  // 👁️ Detectar cuando la pestaña vuelve a estar visible
-  useEffect(() => {
-    const wasHiddenRef = { current: false };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        wasHiddenRef.current = true;
-        console.log("😴 Pestaña oculta - Esperando regreso del usuario");
-      } else if (
-        document.visibilityState === "visible" &&
-        wasHiddenRef.current
-      ) {
-        console.log("👁️ Usuario regresó - Recargando página completa");
-        // Recargar la página completa para asegurar que todos los datos estén actualizados
-        window.location.reload();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, []);
 
   const depositsWithFullData = useMemo(() => {
     if (!deposits) return [];
@@ -960,8 +1157,13 @@ function App() {
       });
 
       // IMPORTANTE: Si el join no trajo validado_por_usuario, agregarlo manualmente
-      if (!fullDeposit.validado_por_usuario && fullDeposit.validado_por === currentUser.id) {
-        console.log("⚠️ Join no trajo validado_por_usuario, agregando manualmente");
+      if (
+        !fullDeposit.validado_por_usuario &&
+        fullDeposit.validado_por === currentUser.id
+      ) {
+        console.log(
+          "⚠️ Join no trajo validado_por_usuario, agregando manualmente"
+        );
         fullDeposit.validado_por_usuario = {
           id: currentUser.id,
           nombre: currentUser.nombre,
@@ -1085,6 +1287,7 @@ function App() {
                     deposits={depositsWithFullData}
                     onUpdateDeposit={handleUpdateDeposit}
                     onTakeDeposit={handleTakeDepositForValidation}
+                    onFetchDepositsByDate={fetchDepositsByDate}
                     empresas={empresas}
                     bancos={bancos}
                     cuentas={cuentas}

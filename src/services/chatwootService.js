@@ -1,9 +1,66 @@
 import { supabase } from '../supabaseClient.js';
 
 /**
- * Servicio para enviar mensajes a ChatWoot usando Supabase Edge Function
+ * Servicio para interactuar con ChatWoot usando Supabase Edge Functions
+ * Esto resuelve problemas de CORS en producción
  */
 export const chatwootService = {
+  /**
+   * Obtiene datos de ChatWoot (mensajes, conversaciones, etc.)
+   * @param {Object} requestData - Datos de la petición
+   * @returns {Promise<Object>} - Respuesta de la API
+   */
+  async getChatwootData(requestData) {
+    try {
+      console.log('🔍 ChatWoot Service - Obteniendo datos via Edge Function:', {
+        configId: requestData.configId,
+        endpoint: requestData.endpoint,
+        method: requestData.method || 'GET'
+      });
+
+      // Llamar a la Edge Function de Supabase
+      const { data, error } = await Promise.race([
+        supabase.functions.invoke('get-chatwoot-data', {
+          body: {
+            configId: requestData.configId,
+            endpoint: requestData.endpoint,
+            method: requestData.method || 'GET',
+            body: requestData.body || null
+          }
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout: Edge Function no responde (30s)')), 30000)
+        )
+      ]);
+
+      if (error) {
+        console.error('❌ Error en Edge Function:', error);
+        throw new Error(`Error en Edge Function: ${error.message}`);
+      }
+
+      // La Edge Function puede devolver un error en el data
+      if (data && !data.success) {
+        console.error('❌ Error de ChatWoot API:', data);
+        throw new Error(data.error || 'Error desconocido de ChatWoot API');
+      }
+
+      console.log('✅ Datos obtenidos exitosamente via Edge Function');
+
+      return {
+        success: true,
+        data: data.data
+      };
+
+    } catch (error) {
+      console.error('💥 Error en chatwootService.getChatwootData:', error);
+
+      return {
+        success: false,
+        message: `Error obteniendo datos: ${error.message}`,
+        error: error
+      };
+    }
+  },
   /**
    * Envía un mensaje a ChatWoot a través de Supabase Edge Function
    * @param {Object} messageData - Datos del mensaje
