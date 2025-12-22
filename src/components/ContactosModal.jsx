@@ -11,6 +11,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { supabase } from "../supabaseClient";
+import { chatwootService } from "../services/chatwootService";
 import {
   buildChatwootApiUrl,
   getChatwootApiHeaders,
@@ -75,21 +76,23 @@ const ContactosModal = ({ onClose }) => {
           const maxPages = 10;
 
           for (let page = 1; page <= maxPages; page++) {
-            const apiUrl = buildChatwootApiUrl(
-              `/api/v1/accounts/${config.account_id}/contacts?page=${page}`
-            );
-            const headers = getChatwootApiHeaders(config.api_token);
-            const contactsResponse = await fetch(apiUrl, { headers });
+            const endpoint = `/api/v1/accounts/${config.account_id}/contacts?page=${page}`;
 
-            if (!contactsResponse.ok) {
+            // Usar Edge Function en lugar de fetch directo
+            const result = await chatwootService.getChatwootData({
+              configId: config.id,
+              endpoint: endpoint
+            });
+
+            if (!result.success) {
               console.warn(
                 `⚠️ Error obteniendo contactos para ${config.account_id} página ${page}:`,
-                contactsResponse.status
+                result.message
               );
               break;
             }
 
-            const contactsResult = await contactsResponse.json();
+            const contactsResult = result.data;
 
             // La API de contactos puede devolver directamente un array o en .payload
             const contacts = Array.isArray(contactsResult)
@@ -114,22 +117,21 @@ const ContactosModal = ({ onClose }) => {
           if (configContacts.length > 0) {
             // Procesar todos los contactos (sin filtrar por bot)
             for (const contact of configContacts) {
-              // Obtener conversaciones para cada contacto
+              // Obtener conversaciones para cada contacto usando Edge Function
               try {
-                const conversationsApiUrl = buildChatwootApiUrl(
-                  `/api/v1/accounts/${config.account_id}/contacts/${contact.id}/conversations`
-                );
-                const conversationsResponse = await fetch(conversationsApiUrl, {
-                  headers,
+                const endpoint = `/api/v1/accounts/${config.account_id}/contacts/${contact.id}/conversations`;
+
+                const conversationsResult = await chatwootService.getChatwootData({
+                  configId: config.id,
+                  endpoint: endpoint
                 });
 
                 let conversations = [];
                 let activeConversationId = null;
 
-                if (conversationsResponse.ok) {
-                  const conversationsResult =
-                    await conversationsResponse.json();
-                  conversations = conversationsResult.payload || [];
+                if (conversationsResult.success) {
+                  const conversationsData = conversationsResult.data;
+                  conversations = conversationsData.payload || conversationsData || [];
 
                   // Buscar conversación activa (open)
                   const activeConversation = conversations.find(
@@ -405,20 +407,19 @@ const ContactosModal = ({ onClose }) => {
         return;
       }
 
-      // Obtener conversaciones del contacto
-      const conversationsUrl = buildChatwootApiUrl(
-        `/api/v1/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}/conversations`
-      );
+      // Obtener conversaciones del contacto usando Edge Function
+      const endpoint = `/api/v1/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}/conversations`;
 
-      const response = await fetch(conversationsUrl, {
-        headers: getChatwootApiHeaders(configData.api_token),
+      const result = await chatwootService.getChatwootData({
+        configId: configData.id,
+        endpoint: endpoint
       });
 
-      if (!response.ok) {
+      if (!result.success) {
         throw new Error('Error al obtener conversaciones');
       }
 
-      const conversationsData = await response.json();
+      const conversationsData = result.data;
       const conversations = Array.isArray(conversationsData)
         ? conversationsData
         : conversationsData.payload || conversationsData.data || [];
@@ -826,29 +827,27 @@ const ContactCard = ({ contacto, onOpenChat, esTrabajadorRegistrado }) => {
                   return;
                 }
 
-                const conversationsUrl = buildChatwootApiUrl(
-                  `/api/v1/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}/conversations`
-                );
+                const endpoint = `/api/v1/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}/conversations`;
 
-                const response = await fetch(conversationsUrl, {
-                  headers: getChatwootApiHeaders(configData.api_token),
+                const result = await chatwootService.getChatwootData({
+                  configId: configData.id,
+                  endpoint: endpoint
                 });
 
-                if (!response.ok) {
+                if (!result.success) {
                   throw new Error('Error al obtener conversaciones');
                 }
 
-                const conversationsData = await response.json();
-                const conversations = conversationsData.payload || [];
+                const conversationsData = result.data;
+                const conversations = conversationsData.payload || conversationsData || [];
 
                 if (conversations.length > 0) {
                   // Tiene conversaciones, abrir la primera
                   const url = `https://chatwoot-chatwoot.gnfcio.easypanel.host/app/accounts/${contacto.chatwootAccountId}/inbox-view/conversation/${conversations[0].id}`;
                   window.open(url, "_blank");
                 } else {
-                  // No tiene conversaciones, abrir el contacto
-                  const url = `https://chatwoot-chatwoot.gnfcio.easypanel.host/app/accounts/${contacto.chatwootAccountId}/contacts/${contacto.contactId}`;
-                  window.open(url, "_blank");
+                  // No tiene conversaciones, mostrar alerta
+                  alert(`El contacto ${contacto.nombreCompleto || contacto.chatwootContactName} no tiene conversaciones.`);
                 }
               } catch (error) {
                 console.error('Error al abrir Chatwoot:', error);
