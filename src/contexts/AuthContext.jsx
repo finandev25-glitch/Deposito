@@ -10,6 +10,12 @@ export const AuthProvider = ({ children }) => {
   const [users, setUsers] = useState([]); // This will hold all users for the admin view
 
   useEffect(() => {
+    // Safety timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      console.warn("⚠️ Auth setup timed out, forcing loading to false");
+      setLoading(false);
+    }, 15000); // 15 seconds timeout (aumentado de 5s)
+
     const setupAuth = async () => {
       console.log("🔄 Iniciando configuración de autenticación...");
       console.log("🔗 Supabase conectado:", !!supabase);
@@ -57,6 +63,7 @@ export const AuthProvider = ({ children }) => {
           });
 
           setLoading(false);
+          clearTimeout(timeoutId); // Limpiar timeout cuando termine exitosamente
           return () => subscription?.unsubscribe();
         } else {
           // MODO SIMULADO (FALLBACK)
@@ -80,6 +87,7 @@ export const AuthProvider = ({ children }) => {
             setUsers(initialUsers);
           }
           setLoading(false);
+          clearTimeout(timeoutId); // Limpiar timeout cuando termine exitosamente
         }
       } catch (error) {
         console.error("💥 Error crítico en setupAuth:", error);
@@ -87,6 +95,7 @@ export const AuthProvider = ({ children }) => {
         console.log("🔄 Fallback a modo simulado por error...");
         setUsers(initialUsers);
         setLoading(false);
+        clearTimeout(timeoutId); // Limpiar timeout cuando termine con error
       }
     };
 
@@ -117,7 +126,7 @@ export const AuthProvider = ({ children }) => {
           setUsers([]);
         } else {
           console.log("✅ Perfil cargado correctamente:", profile.nombre);
-          
+
           // Map DB 'rol' to 'user_rol' which the app expects
           const profileWithRole = {
             ...profile,
@@ -149,14 +158,6 @@ export const AuthProvider = ({ children }) => {
         setUsers([]);
       }
     };
-
-    // Safety timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
-      if (loading) {
-        console.warn("⚠️ Auth setup timed out, forcing loading to false");
-        setLoading(false);
-      }
-    }, 5000); // 5 seconds timeout
 
     setupAuth();
 
