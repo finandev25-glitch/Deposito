@@ -186,19 +186,23 @@ const ChatwootConversation = ({
         return;
       }
 
-      // Calcular timestamps de hoy y ayer
+      // Calcular timestamp del inicio del día actual (00:00 de hoy)
       const now = new Date();
-      const yesterday = new Date(now);
-      yesterday.setDate(yesterday.getDate() - 1);
-      yesterday.setHours(0, 0, 0, 0);
-      const yesterdayTimestamp = Math.floor(yesterday.getTime() / 1000);
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayStartTimestamp = Math.floor(todayStart.getTime() / 1000);
 
-      // Cargar todos los mensajes de hoy y ayer usando paginación
+      console.log(`📅 Cargando mensajes desde: ${todayStart.toLocaleString()} (timestamp: ${todayStartTimestamp})`);
+
+      // Cargar TODOS los mensajes del día actual (sin límite de paginación)
       let allMessages = [];
       let beforeId = null;
       let hasMore = true;
+      let pageCount = 0;
 
       while (hasMore) {
+        pageCount++;
+
         // Usar Edge Function en lugar de fetch directo
         const endpoint = `/api/v1/accounts/${chatwootConfig.account_id}/conversations/${conversationId}/messages${beforeId ? `?before=${beforeId}` : ''}`;
 
@@ -214,25 +218,34 @@ const ChatwootConversation = ({
         const data = result.data;
         const messagesPage = data.payload || [];
 
-        if (messagesPage.length > 0) {
-          // Filtrar mensajes de hoy y ayer solamente
-          const recentMessages = messagesPage.filter(msg => msg.created_at >= yesterdayTimestamp);
-          allMessages = allMessages.concat(recentMessages);
+        console.log(`📄 Página ${pageCount}: ${messagesPage.length} mensajes obtenidos`);
 
-          // Si encontramos mensajes más antiguos que ayer, detener
-          if (recentMessages.length < messagesPage.length) {
+        if (messagesPage.length > 0) {
+          // Filtrar mensajes del día actual solamente (desde las 00:00)
+          const todayMessages = messagesPage.filter(msg => msg.created_at >= todayStartTimestamp);
+          allMessages = allMessages.concat(todayMessages);
+
+          console.log(`   ✅ ${todayMessages.length} mensajes del día actual en esta página`);
+
+          // Si encontramos mensajes más antiguos que hoy, detener
+          if (todayMessages.length < messagesPage.length) {
+            console.log(`   🛑 Encontrados mensajes de días anteriores, deteniendo paginación`);
             hasMore = false;
           } else if (messagesPage.length < 20) {
+            // Si la página tiene menos de 20 mensajes, es la última
+            console.log(`   🛑 Última página (menos de 20 mensajes)`);
             hasMore = false;
           } else {
             beforeId = messagesPage[0].id;
+            console.log(`   ⏭️ Continuando con paginación (beforeId: ${beforeId})`);
           }
         } else {
+          console.log(`   🛑 No hay más mensajes`);
           hasMore = false;
         }
       }
 
-      console.log(`✅ Mensajes cargados (hoy y ayer): ${allMessages.length}`);
+      console.log(`✅ Total mensajes del día cargados: ${allMessages.length} (${pageCount} páginas consultadas)`);
 
       // Ordenar por fecha y hora de forma ascendente (del más antiguo al más reciente)
       allMessages.sort((a, b) => a.created_at - b.created_at);
