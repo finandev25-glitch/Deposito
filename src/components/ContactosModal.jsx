@@ -71,9 +71,9 @@ const ContactosModal = ({ onClose }) => {
         );
 
         try {
-          // Obtener contactos con paginación (hasta 10 páginas para obtener todos)
+          // Obtener contactos con paginación (hasta 3 páginas para carga rápida)
           let configContacts = [];
-          const maxPages = 10;
+          const maxPages = 3; // Reducido de 10 a 3 para carga más rápida
 
           for (let page = 1; page <= maxPages; page++) {
             const endpoint = `/api/v1/accounts/${config.account_id}/contacts?page=${page}`;
@@ -115,66 +115,23 @@ const ContactosModal = ({ onClose }) => {
           );
 
           if (configContacts.length > 0) {
-            // Procesar todos los contactos (sin filtrar por bot)
+            // OPTIMIZACIÓN: Agregar contactos SIN cargar conversaciones
+            // Las conversaciones se cargarán bajo demanda cuando el usuario haga clic
             for (const contact of configContacts) {
-              // Obtener conversaciones para cada contacto usando Edge Function
-              try {
-                const endpoint = `/api/v1/accounts/${config.account_id}/contacts/${contact.id}/conversations`;
+              const cleanPhone = contact.phone_number?.replace(
+                /[\s\-\(\)\+]/g,
+                ""
+              );
 
-                const conversationsResult = await chatwootService.getChatwootData({
-                  configId: config.id,
-                  endpoint: endpoint
-                });
-
-                let conversations = [];
-                let activeConversationId = null;
-
-                if (conversationsResult.success) {
-                  const conversationsData = conversationsResult.data;
-                  conversations = conversationsData.payload || conversationsData || [];
-
-                  // Buscar conversación activa (open)
-                  const activeConversation = conversations.find(
-                    (conv) => conv.status === "open"
-                  );
-                  if (activeConversation) {
-                    activeConversationId = activeConversation.id;
-                  }
-                }
-
-                // Limpiar número de teléfono para normalizar
-                const cleanPhone = contact.phone_number?.replace(
-                  /[\s\-\(\)\+]/g,
-                  ""
-                );
-
-                allContactsFromChatwoot.push({
-                  ...contact,
-                  accountId: config.account_id,
-                  chatwootConfigId: config.id,
-                  conversations,
-                  activeConversationId,
-                  cleanPhone,
-                  configName: config.alias || `Config ${config.account_id}`,
-                });
-              } catch (convError) {
-                console.warn(
-                  `⚠️ Error obteniendo conversaciones para contacto ${contact.id}:`,
-                  convError
-                );
-                allContactsFromChatwoot.push({
-                  ...contact,
-                  accountId: config.account_id,
-                  chatwootConfigId: config.id,
-                  conversations: [],
-                  activeConversationId: null,
-                  cleanPhone: contact.phone_number?.replace(
-                    /[\s\-\(\)\+]/g,
-                    ""
-                  ),
-                  configName: config.alias || `Config ${config.account_id}`,
-                });
-              }
+              allContactsFromChatwoot.push({
+                ...contact,
+                accountId: config.account_id,
+                chatwootConfigId: config.id,
+                conversations: null, // null = no cargadas aún
+                activeConversationId: null,
+                cleanPhone,
+                configName: config.alias || `Config ${config.account_id}`,
+              });
             }
           }
         } catch (configFetchError) {
