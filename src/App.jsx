@@ -422,6 +422,40 @@ function App() {
     setCurrentSelectedDate(fecha);
   }, []);
 
+  // Función para cargar todos los depósitos (sin filtro de fecha)
+  const fetchAllDeposits = useCallback(async () => {
+    console.log(
+      "🔄 App: Cargando TODOS los depósitos (sin filtro de fecha)..."
+    );
+
+    if (!supabase || !currentUser || !isSupabaseConnected) {
+      console.log("⚠️ No se puede cargar depósitos - falta conexión");
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("depositos")
+        .select(DEPOSIT_FULL_QUERY_STRING)
+        .order("fecha_registro", { ascending: false })
+        .limit(500); // Limitar a 500 para evitar cargar demasiados
+
+      if (error) {
+        console.error("❌ Error cargando todos los depósitos:", error);
+        return;
+      }
+
+      setDeposits(data || []);
+      setCurrentSelectedDate(null); // Limpiar fecha seleccionada
+      console.log(
+        "✅ Todos los depósitos cargados exitosamente:",
+        data?.length || 0
+      );
+    } catch (error) {
+      console.error("💥 Error crítico cargando todos los depósitos:", error);
+    }
+  }, [supabase, currentUser, isSupabaseConnected]);
+
   // Carga inicial
   useEffect(() => {
     console.log("🔍 Verificando estado de carga...", {
@@ -1326,6 +1360,7 @@ function App() {
                     onUpdateDeposit={handleUpdateDeposit}
                     onTakeDeposit={handleTakeDepositForValidation}
                     onFetchDepositsByDate={fetchDepositsByDate}
+                    onFetchAllDeposits={fetchAllDeposits}
                     onSelectedDateChange={handleSelectedDateChange}
                     empresas={empresas}
                     bancos={bancos}

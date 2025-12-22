@@ -59,6 +59,7 @@ const KanbanView = ({
   onUpdateDeposit,
   onTakeDeposit,
   onFetchDepositsByDate,
+  onFetchAllDeposits,
   onSelectedDateChange,
   empresas,
   bancos,
@@ -72,6 +73,8 @@ const KanbanView = ({
   const [specificDate, setSpecificDate] = useState(() => {
     const fecha = toLocalISOString(new Date());
     console.log("🎯 KANBAN: specificDate inicializado con:", fecha);
+    console.log("🎯 KANBAN: fecha actual (new Date()):", new Date());
+    console.log("🎯 KANBAN: toLocalISOString result:", fecha);
     return fecha;
   });
   const [selectedDeposit, setSelectedDeposit] = useState(null);
@@ -102,18 +105,38 @@ const KanbanView = ({
     }
 
     if (filterDateOption === "specific" && specificDate) {
-      console.log("🔄 KANBAN: Solicitando depósitos para fecha:", specificDate);
+      console.log(
+        "🔄 KANBAN: Solicitando depósitos para fecha específica:",
+        specificDate
+      );
       onFetchDepositsByDate(specificDate);
     } else if (filterDateOption === "today") {
       const today = toLocalISOString(new Date());
       console.log("🔄 KANBAN: Solicitando depósitos para hoy:", today);
       onFetchDepositsByDate(today);
+    } else if (filterDateOption === "all") {
+      console.log(
+        "🔄 KANBAN: Opción 'Cualquier fecha' seleccionada - cargando TODOS los depósitos"
+      );
+      if (onFetchAllDeposits) {
+        onFetchAllDeposits();
+      } else {
+        console.warn("⚠️ KANBAN: onFetchAllDeposits no está disponible");
+      }
     } else {
       console.log(
-        "⚠️ KANBAN: No se cumple ninguna condición para cargar depósitos"
+        "⚠️ KANBAN: No se cumple ninguna condición para cargar depósitos. filterDateOption:",
+        filterDateOption,
+        "specificDate:",
+        specificDate
       );
     }
-  }, [specificDate, filterDateOption, onFetchDepositsByDate]);
+  }, [
+    specificDate,
+    filterDateOption,
+    onFetchDepositsByDate,
+    onFetchAllDeposits,
+  ]);
 
   // Notificar a App cuando cambie la fecha seleccionada
   useEffect(() => {
@@ -540,6 +563,11 @@ const KanbanView = ({
                   onChange={(e) => {
                     const newDate = e.target.value;
                     console.log("📅 INPUT: Usuario seleccionó fecha:", newDate);
+                    console.log("📅 INPUT: Fecha anterior era:", specificDate);
+                    console.log(
+                      "📅 INPUT: onFetchDepositsByDate disponible:",
+                      !!onFetchDepositsByDate
+                    );
                     setSpecificDate(newDate);
                   }}
                   className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
