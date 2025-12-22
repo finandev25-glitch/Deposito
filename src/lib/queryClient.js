@@ -4,8 +4,8 @@ import { QueryClient } from '@tanstack/react-query';
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Refetch cuando la ventana regresa al foco (SOLUCIÓN AL PROBLEMA)
-      refetchOnWindowFocus: true,
+      // Desactivado para evitar refetch automático al regresar al foco
+      refetchOnWindowFocus: false,
 
       // Refetch cuando se reconecta la red
       refetchOnReconnect: true,

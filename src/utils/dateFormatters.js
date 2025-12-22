@@ -3,7 +3,7 @@
  */
 
 /**
- * Convierte una fecha a formato ISO local (YYYY-MM-DD)
+ * Convierte una fecha a formato ISO local (YYYY-MM-DD) en zona horaria de Lima
  * @param {Date|string} date - Fecha a convertir
  * @returns {string|null} Fecha en formato ISO o null si es inválida
  */
@@ -11,11 +11,21 @@ export const toLocalISOString = (date) => {
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
 
-  const year = d.getFullYear();
-  const month = (d.getMonth() + 1).toString().padStart(2, "0");
-  const day = d.getDate().toString().padStart(2, "0");
+  // Obtener componentes de fecha en zona horaria de Lima usando Intl.DateTimeFormat
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
 
-  return `${year}-${month}-${day}`;
+  // formatToParts devuelve un array con cada componente de la fecha
+  const parts = formatter.formatToParts(d);
+  const year = parts.find(p => p.type === "year").value;
+  const month = parts.find(p => p.type === "month").value;
+  const day = parts.find(p => p.type === "day").value;
+
+  return `${year}-${month}-${day}`; // Formato: YYYY-MM-DD
 };
 
 /**
@@ -58,7 +68,7 @@ export const formatDate = (isoString) => {
 };
 
 /**
- * Formatea fecha corta (DD/MM)
+ * Formatea fecha corta (DD/MM) en zona horaria de Lima
  * @param {string} isoString - Fecha ISO
  * @returns {string} Fecha formateada "DD/MM" o ""
  */
@@ -68,8 +78,30 @@ export const formatShortDate = (isoString) => {
   const date = new Date(isoString);
   if (isNaN(date.getTime())) return "";
 
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
+  // Usar toLocaleDateString con timezone de Lima para obtener solo la fecha
+  const formatted = date.toLocaleDateString("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Lima"
+  });
+
+  return formatted; // Ya viene en formato DD/MM
+};
+
+/**
+ * Formatea una fecha DATE (YYYY-MM-DD) a formato corto (DD/MM)
+ * @param {string} dateString - Fecha en formato YYYY-MM-DD
+ * @returns {string} Fecha formateada "DD/MM" o ""
+ */
+export const formatShortDateFromDateOnly = (dateString) => {
+  if (!dateString) return "";
+
+  // dateString viene como "YYYY-MM-DD" desde la columna DATE de PostgreSQL
+  const parts = dateString.split("-");
+  if (parts.length !== 3) return "";
+
+  const day = parts[2];
+  const month = parts[1];
 
   return `${day}/${month}`;
 };

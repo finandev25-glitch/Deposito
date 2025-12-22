@@ -104,10 +104,11 @@ export const initialUsers = [
   },
 ];
 
-export const generateMockDeposits = (count = 20, personal = [], users = []) => {
+export const generateMockDeposits = (count = 100, personal = [], users = []) => {
   return Array.from({ length: count }, (_, index) => {
-    const fechaDeposito = faker.date.recent({ days: 30 });
-    const fechaRegistro = faker.date.recent({ days: 5, refDate: fechaDeposito });
+    // Generar fechas en un rango amplio (últimos 730 días = 2 años)
+    const fechaDeposito = faker.date.recent({ days: 730 });
+    const fechaRegistro = faker.date.recent({ days: 7, refDate: fechaDeposito });
     const estado = faker.helpers.arrayElement(estados);
     
     const isPdf = Math.random() > 0.8;
