@@ -326,8 +326,8 @@ function App() {
 
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(
-            () => reject(new Error("Query timeout después de 30 segundos")),
-            30000
+            () => reject(new Error("Query timeout después de 2 minutos")),
+            120000
           );
         });
 

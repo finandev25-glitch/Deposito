@@ -15,8 +15,6 @@ import {
   Search,
   ChevronRight,
   ChevronDown,
-  Building,
-  CreditCard,
   Calendar,
   BotOff,
   MessageCircle,
@@ -60,6 +58,7 @@ const KanbanView = ({
   deposits,
   onUpdateDeposit,
   onTakeDeposit,
+  onFetchDepositsByDate,
   empresas,
   bancos,
   cuentas,
@@ -68,16 +67,17 @@ const KanbanView = ({
   const { currentUser } = useContext(AuthContext);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [filterEmpresa, setFilterEmpresa] = useState("all");
-  const [filterBanco, setFilterBanco] = useState("all");
   const [filterDateOption, setFilterDateOption] = useState("specific");
-  const [specificDate, setSpecificDate] = useState(() =>
-    toLocalISOString(new Date())
-  );
+  const [specificDate, setSpecificDate] = useState(() => {
+    const fecha = toLocalISOString(new Date());
+    console.log("🎯 KANBAN: specificDate inicializado con:", fecha);
+    return fecha;
+  });
   const [selectedDeposit, setSelectedDeposit] = useState(null);
   const selectedDepositRef = useRef(null);
   const modalOpenTimeRef = useRef(0);
   const hasRestoredRef = useRef(false);
+  const isInitialMountRef = useRef(true);
 
   // Estados para colapsar/expandir secciones de "En Validación"
   const [showNormales, setShowNormales] = useState(true);
@@ -86,6 +86,31 @@ const KanbanView = ({
   // Estado para modal de trabajadores con bot Off
   const [showBotOffModal, setShowBotOffModal] = useState(false);
   const [showContactosModal, setShowContactosModal] = useState(false);
+
+  // Fetch deposits cuando cambia la fecha específica (incluyendo montaje inicial)
+  useEffect(() => {
+    console.log("🔄 KANBAN useEffect ejecutado:", {
+      onFetchDepositsByDate: !!onFetchDepositsByDate,
+      filterDateOption,
+      specificDate
+    });
+
+    if (!onFetchDepositsByDate) {
+      console.log("⚠️ KANBAN: onFetchDepositsByDate no está disponible");
+      return;
+    }
+
+    if (filterDateOption === "specific" && specificDate) {
+      console.log("🔄 KANBAN: Solicitando depósitos para fecha:", specificDate);
+      onFetchDepositsByDate(specificDate);
+    } else if (filterDateOption === "today") {
+      const today = toLocalISOString(new Date());
+      console.log("🔄 KANBAN: Solicitando depósitos para hoy:", today);
+      onFetchDepositsByDate(today);
+    } else {
+      console.log("⚠️ KANBAN: No se cumple ninguna condición para cargar depósitos");
+    }
+  }, [specificDate, filterDateOption, onFetchDepositsByDate]);
 
   // Mantener ref actualizada y registrar tiempo de apertura
   useEffect(() => {
@@ -198,7 +223,7 @@ const KanbanView = ({
         }
       }
     }
-  }, [deposits]);
+  }, [deposits, selectedDeposit]);
 
   // Detectar cambios de visibilidad de la página
   useEffect(() => {
@@ -233,24 +258,33 @@ const KanbanView = ({
     { id: "rechazado", title: "Rechazado", color: "bg-red-400" },
   ];
 
-  const bancosFiltrados = useMemo(() => {
-    const bancosActivos = bancos.filter((b) => b.estado === "activo");
-    if (filterEmpresa === "all") {
-      return bancosActivos;
-    }
-    const bancosDeLaEmpresa = new Set(
-      cuentas
-        .filter((c) => c.empresa_id === filterEmpresa)
-        .map((c) => c.banco_id)
-    );
-    return bancosActivos.filter((b) => bancosDeLaEmpresa.has(b.id));
-  }, [filterEmpresa, bancos, cuentas]);
+
 
   const filteredDeposits = useMemo(() => {
     if (!deposits || !Array.isArray(deposits)) {
+      console.log(
+        "⚠️ KANBAN: No hay deposits o no es array:",
+        deposits?.length
+      );
       return [];
     }
 
+    console.log("🔍 KANBAN: Filtrando deposits:", {
+      total: deposits.length,
+      filterDateOption,
+      specificDate,
+      searchTerm: debouncedSearchTerm,
+    });
+    // Debug: mostrar las primeras 5 fechas disponibles
+    const fechasDisponibles = deposits.slice(0, 5).map((d) => ({
+      id: d.id,
+      fecha_solo_date: d.fecha_solo_date,
+      fecha_registro: d.fecha_registro?.substring(0, 10),
+    }));
+    console.log(
+      "📅 KANBAN: Fechas disponibles (primeros 5):",
+      fechasDisponibles
+    );
     const filtered = deposits.filter((deposit) => {
       const lowerCaseSearchTerm = debouncedSearchTerm.toLowerCase();
 
@@ -293,41 +327,21 @@ const KanbanView = ({
           deposit.monto.toString().includes(lowerCaseSearchTerm)) ||
         formattedDateTime.includes(lowerCaseSearchTerm);
 
-      const matchesEmpresa =
-        filterEmpresa === "all" || deposit.empresa?.id === filterEmpresa;
-      const matchesBanco =
-        filterBanco === "all" || deposit.banco?.id === filterBanco;
+      // NOTA: Ya NO filtramos por fecha aquí porque la BD ya trae solo los depósitos
+      // de la fecha específica solicitada (ver useEffect que llama onFetchDepositsByDate)
 
-      const matchesDate = (() => {
-        if (filterDateOption === "all") return true;
+      return matchesSearch;
 
-        const depositDateStr = toLocalISOString(deposit.fecha_registro);
-        if (!depositDateStr) return false;
-
-        if (filterDateOption === "today") {
-          const todayStr = toLocalISOString(new Date());
-          return depositDateStr === todayStr;
-        }
-
-        if (filterDateOption === "specific" && specificDate) {
-          return depositDateStr === specificDate;
-        }
-
-        return true;
-      })();
-
-      return matchesSearch && matchesEmpresa && matchesBanco && matchesDate;
     });
 
+    console.log(
+      "✅ KANBAN: Resultado filtrado:",
+      filtered.length,
+      "de",
+      deposits.length
+    );
     return filtered;
-  }, [
-    deposits,
-    debouncedSearchTerm,
-    filterEmpresa,
-    filterBanco,
-    filterDateOption,
-    specificDate,
-  ]);
+  }, [deposits, debouncedSearchTerm]);
 
   const groupedDeposits = useMemo(() => {
     const grouped = filteredDeposits.reduce((acc, deposit) => {
@@ -449,7 +463,8 @@ const KanbanView = ({
   return (
     <>
       <div className="h-full p-6 flex flex-col bg-gray-50 dark:bg-gray-950">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6 flex-shrink-0">
+        {/* Header con título y botones en la misma línea */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4 flex-shrink-0">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               Kanban de Depósitos
@@ -458,85 +473,9 @@ const KanbanView = ({
               Visualiza y gestiona el estado de los depósitos.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="relative">
-              <Building
-                size={12}
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-              />
-              <select
-                value={filterEmpresa}
-                onChange={(e) => {
-                  setFilterEmpresa(e.target.value);
-                  setFilterBanco("all");
-                }}
-                className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-              >
-                <option value="all">Todas las Empresas</option>
-                {empresas
-                  .filter((e) => e.estado === "activo")
-                  .map((empresa) => (
-                    <option key={empresa.id} value={empresa.id}>
-                      {empresa.nombre}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div className="relative">
-              <CreditCard
-                size={12}
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-              />
-              <select
-                value={filterBanco}
-                onChange={(e) => setFilterBanco(e.target.value)}
-                className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-              >
-                <option value="all">Todos los Bancos</option>
-                {bancosFiltrados.map((banco) => (
-                  <option key={banco.id} value={banco.id}>
-                    {banco.abreviatura}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="relative">
-              <Calendar
-                size={12}
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-              />
-              <select
-                value={filterDateOption}
-                onChange={(e) => setFilterDateOption(e.target.value)}
-                className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-              >
-                <option value="all">Cualquier fecha</option>
-                <option value="today">Hoy</option>
-                <option value="specific">Fecha específica</option>
-              </select>
-            </div>
-            <AnimatePresence>
-              {filterDateOption === "specific" && (
-                <motion.div
-                  initial={{ opacity: 0, width: 0 }}
-                  animate={{ opacity: 1, width: "auto" }}
-                  exit={{ opacity: 0, width: 0 }}
-                  className="relative"
-                  transition={{ duration: 0.2 }}
-                >
-                  <input
-                    type="date"
-                    value={specificDate}
-                    onChange={(e) => setSpecificDate(e.target.value)}
-                    className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Botón Bot Off */}
+          
+          {/* Botones Bot Off y Contactos junto al título */}
+          <div className="flex items-center gap-3">
             <button
               onClick={() => setShowBotOffModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors shadow-sm"
@@ -546,7 +485,6 @@ const KanbanView = ({
               <span className="hidden sm:inline">Bots Off</span>
             </button>
 
-            {/* Botón Contactos */}
             <button
               onClick={() => setShowContactosModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shadow-sm"
@@ -555,22 +493,62 @@ const KanbanView = ({
               <MessageCircle size={18} />
               <span className="hidden sm:inline">Contactos</span>
             </button>
+          </div>
+        </div>
 
-            <div className="relative">
-              <Search
-                size={14}
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-              />
-              <input
-                type="text"
-                placeholder="Buscar..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full md:w-56 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-              />
-            </div>
+        {/* Filtros y búsqueda en una segunda línea */}
+        <div className="flex flex-wrap items-center gap-4 mb-6 flex-shrink-0">
+          <div className="relative">
+            <Calendar
+              size={12}
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            />
+            <select
+              value={filterDateOption}
+              onChange={(e) => setFilterDateOption(e.target.value)}
+              className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            >
+              <option value="all">Cualquier fecha</option>
+              <option value="today">Hoy</option>
+              <option value="specific">Fecha específica</option>
+            </select>
+          </div>
+          
+          <AnimatePresence>
+            {filterDateOption === "specific" && (
+              <motion.div
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: "auto" }}
+                exit={{ opacity: 0, width: 0 }}
+                className="relative"
+                transition={{ duration: 0.2 }}
+              >
+                <input
+                  type="date"
+                  value={specificDate}
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    console.log("📅 INPUT: Usuario seleccionó fecha:", newDate);
+                    setSpecificDate(newDate);
+                  }}
+                  className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-            {/* Botón para activar notificaciones */}
+          <div className="relative ml-auto">
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            />
+            <input
+              type="text"
+              placeholder="Buscar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full md:w-56 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            />
           </div>
         </div>
 
