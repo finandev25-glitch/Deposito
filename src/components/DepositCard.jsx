@@ -1,13 +1,7 @@
 import React, { useState, useEffect, memo } from "react";
-import {
-  Building2,
-  Calendar,
-  CreditCard,
-  User,
-  Eye,
-} from "lucide-react";
+import { Building2, Calendar, CreditCard, User, Phone } from "lucide-react";
 import { getStatusIcon, getStatusInfo } from "../utils/depositStatusHelpers";
-import { formatDate, formatShortDate } from "../utils/dateFormatters";
+import { formatDate, formatShortDateFromDateOnly } from "../utils/dateFormatters";
 
 const DepositCard = ({ deposit, onClick }) => {
   const [elapsedTime, setElapsedTime] = useState("");
@@ -25,8 +19,11 @@ const DepositCard = ({ deposit, onClick }) => {
         setElapsedTime("+60 min");
       } else {
         // Mostrar segundos si el estado es "pendiente" o "en_validacion"
-        if (deposit.estado === "pendiente" || deposit.estado === "en_validacion") {
-          setElapsedTime(`${diffMins}:${diffSecs.toString().padStart(2, '0')}`);
+        if (
+          deposit.estado === "pendiente" ||
+          deposit.estado === "en_validacion"
+        ) {
+          setElapsedTime(`${diffMins}:${diffSecs.toString().padStart(2, "0")}`);
         } else {
           setElapsedTime(`${diffMins} min`);
         }
@@ -35,7 +32,10 @@ const DepositCard = ({ deposit, onClick }) => {
 
     calculateTime();
     // Actualizar cada segundo si es pendiente o en_validacion, cada minuto si no
-    const interval = (deposit.estado === "pendiente" || deposit.estado === "en_validacion") ? 1000 : 60000;
+    const interval =
+      deposit.estado === "pendiente" || deposit.estado === "en_validacion"
+        ? 1000
+        : 60000;
     const intervalId = setInterval(calculateTime, interval);
 
     return () => clearInterval(intervalId);
@@ -60,9 +60,11 @@ const DepositCard = ({ deposit, onClick }) => {
       onClick={() => onClick?.(deposit)}
       className={`rounded-lg border border-gray-200 dark:border-gray-700/80 border-l-4 ${
         isOldDeposit
-          ? 'border-l-orange-500 bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 shadow-orange-200/50 dark:shadow-orange-900/30'
+          ? "border-l-orange-500 bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 shadow-orange-200/50 dark:shadow-orange-900/30"
           : `${statusStyles.borderColor} ${statusStyles.gradient} ${statusStyles.shadow}`
-      } p-2.5 transition-all duration-300 cursor-pointer flex flex-col h-full ${isOldDeposit ? 'ring-2 ring-orange-300 dark:ring-orange-600' : ''}`}
+      } p-2.5 transition-all duration-300 cursor-pointer flex flex-col h-full ${
+        isOldDeposit ? "ring-2 ring-orange-300 dark:ring-orange-600" : ""
+      }`}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-1.5">
@@ -111,7 +113,13 @@ const DepositCard = ({ deposit, onClick }) => {
             className: statusStyles.iconColor,
           })}
           <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-            {formatShortDate(deposit.fecha_registro)} {new Date(deposit.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+            {formatShortDateFromDateOnly(deposit.fecha_solo_date)}{" "}
+            {new Date(deposit.fecha_registro).toLocaleTimeString("es-PE", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+              timeZone: "America/Lima"
+            })}
           </span>
           <div className="flex items-center space-x-1 text-xs text-gray-500 dark:text-gray-400">
             {React.createElement(getStatusIcon(deposit.estado), {
@@ -157,9 +165,21 @@ const DepositCard = ({ deposit, onClick }) => {
               size={10}
               className="text-gray-400 dark:text-gray-500 flex-shrink-0"
             />
-            <span className="truncate" title={deposit.trabajador?.nombre}>
-              {deposit.trabajador?.nombre || "N/A"}
-            </span>
+            <div className="flex flex-col overflow-hidden">
+              <span className="truncate" title={deposit.trabajador?.nombre}>
+                {deposit.trabajador?.nombre || "N/A"}
+              </span>
+              {deposit.trabajador?.telefono_origen && (
+                <div className="flex items-center text-xs text-gray-500 dark:text-gray-400">
+                  <Phone size={8} className="mr-1" />
+                  <span className="font-mono">
+                    {deposit.trabajador.telefono_origen.startsWith('51')
+                      ? deposit.trabajador.telefono_origen.slice(2)
+                      : deposit.trabajador.telefono_origen}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center space-x-2 overflow-hidden">
             <CreditCard
@@ -173,25 +193,33 @@ const DepositCard = ({ deposit, onClick }) => {
               {deposit.banco?.abreviatura || "N/A"}
             </span>
           </div>
-          <div className="flex items-center justify-between space-x-2 overflow-hidden col-span-2">
-            <div className="flex items-center space-x-2 overflow-hidden">
-              <Calendar
-                size={10}
-                className="text-gray-400 dark:text-gray-500 flex-shrink-0"
-              />
-              <span className="text-xs truncate">
-                {formatDate(deposit.fecha_deposito)}
-              </span>
-            </div>
-            {/* Botón Ver Detalles - Pequeño */}
-            <button
-              className="flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded transition-colors duration-200 text-xs font-medium flex-shrink-0"
-              title="Ver detalles del depósito"
-            >
-              <Eye size={12} />
-              <span className="hidden sm:inline">Ver</span>
-            </button>
+          <div className="flex items-center space-x-2 overflow-hidden">
+            <Calendar
+              size={10}
+              className="text-gray-400 dark:text-gray-500 flex-shrink-0"
+            />
+            <span className="text-xs truncate">
+              {formatDate(deposit.fecha_deposito)}
+            </span>
           </div>
+
+          {/* Usuario que cambió estado (solo rechazado y en validación) */}
+          {(deposit.rechazado_por || deposit.en_validacion_por) && (
+            <div className="col-span-2 flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
+              <User size={8} className="flex-shrink-0" />
+              {deposit.estado === "rechazado" && deposit.rechazado_por && (
+                <span className="text-red-600 truncate">
+                  ✗ Rechazado por: {deposit.rechazado_por}
+                </span>
+              )}
+              {deposit.estado === "en_validacion" &&
+                deposit.en_validacion_por && (
+                  <span className="text-blue-600 truncate">
+                    ⏳ En validación por: {deposit.en_validacion_por}
+                  </span>
+                )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -204,28 +232,32 @@ const MemoizedDepositCard = memo(DepositCard, (prevProps, nextProps) => {
   // Retornar FALSE significa SÍ re-renderizar
 
   // Si CUALQUIERA de estos campos cambió, RE-RENDERIZAR (return false)
-  const shouldNotRerender = (
+  const shouldNotRerender =
     prevProps.deposit.id === nextProps.deposit.id &&
     prevProps.deposit.estado === nextProps.deposit.estado &&
     prevProps.deposit.monto === nextProps.deposit.monto &&
     prevProps.deposit.fecha_registro === nextProps.deposit.fecha_registro &&
     prevProps.deposit.validado_por === nextProps.deposit.validado_por &&
-    prevProps.deposit.es_antiguo === nextProps.deposit.es_antiguo
-  );
+    prevProps.deposit.rechazado_por === nextProps.deposit.rechazado_por &&
+    prevProps.deposit.en_validacion_por ===
+      nextProps.deposit.en_validacion_por &&
+    prevProps.deposit.es_antiguo === nextProps.deposit.es_antiguo &&
+    prevProps.deposit.trabajador?.telefono_origen ===
+      nextProps.deposit.trabajador?.telefono_origen;
 
   // Debug: Log cuando se detecta un cambio
   if (!shouldNotRerender) {
-    console.log('🔄 DepositCard RE-RENDER:', {
+    console.log("🔄 DepositCard RE-RENDER:", {
       id: nextProps.deposit.id,
       es_antiguo_prev: prevProps.deposit.es_antiguo,
       es_antiguo_next: nextProps.deposit.es_antiguo,
-      estado: nextProps.deposit.estado
+      estado: nextProps.deposit.estado,
     });
   }
 
   return shouldNotRerender;
 });
 
-MemoizedDepositCard.displayName = 'DepositCard';
+MemoizedDepositCard.displayName = "DepositCard";
 
 export default MemoizedDepositCard;
