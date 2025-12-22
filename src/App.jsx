@@ -404,6 +404,22 @@ function App() {
         );
         setDeposits(data || []);
         console.log("✅ PASO 5: Estado actualizado correctamente");
+
+        // DEBUG: Verificar si fecha_solo_date está presente en los datos
+        if (data && data.length > 0) {
+          console.log(
+            "🔍 DEBUG: Verificando fecha_solo_date en primer registro:"
+          );
+          console.log("🔍 Primer depósito completo:", data[0]);
+          console.log("🔍 fecha_solo_date presente:", data[0].fecha_solo_date);
+          console.log("🔍 fecha_registro presente:", data[0].fecha_registro);
+
+          const conFechaSoloDate = data.filter((d) => d.fecha_solo_date).length;
+          console.log(
+            `🔍 Registros con fecha_solo_date: ${conFechaSoloDate} de ${data.length}`
+          );
+        }
+
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       } catch (error) {
         console.error("💥 Error crítico cargando depósitos:", error);
