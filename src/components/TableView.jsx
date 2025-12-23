@@ -64,6 +64,14 @@ const TableView = ({
     });
   };
 
+  // useEffect para cargar datos cuando cambia el período a "month"
+  React.useEffect(() => {
+    if (filterPeriod === "month" && selectedMonth && onFetchDepositsByPeriod) {
+      console.log("📅 TableView: Auto-cargando depósitos del mes:", selectedMonth);
+      onFetchDepositsByPeriod(`month:${selectedMonth}`);
+    }
+  }, [filterPeriod]); // Solo cuando cambia filterPeriod, no selectedMonth
+
   React.useEffect(() => {
     let filtered = deposits;
 
