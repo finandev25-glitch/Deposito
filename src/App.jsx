@@ -239,7 +239,6 @@ function App() {
           const errorMsg =
             "Error de conexión. Verifica tu internet y usa el botón 'Reconectar' si es necesario.";
           setAppDataError(errorMsg);
-          setConnectionError(new Error(errorMsg));
         } else {
           setAppDataError(
             `Error al cargar los datos: ${error.message}. Revisa la consola para más detalles.`
