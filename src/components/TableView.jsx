@@ -22,6 +22,7 @@ const TableView = ({
   deposits,
   onUpdateDeposit,
   onFetchDepositsByDate,
+  onFetchDepositsByPeriod,
   onSelectedDateChange,
   empresas,
   bancos,
@@ -32,6 +33,10 @@ const TableView = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterPeriod, setFilterPeriod] = useState("all");
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [specificDate, setSpecificDate] = useState("");
   const [selectedDeposit, setSelectedDeposit] = useState(null);
   const [modalEditMode, setModalEditMode] = useState("full"); // 'full' or 'fields-only'
@@ -102,39 +107,10 @@ const TableView = ({
       filtered = filtered.filter((deposit) => deposit.estado === filterStatus);
     }
 
-    if (filterPeriod !== "all") {
-      const now = new Date();
-      filtered = filtered.filter((deposit) => {
-        const registroDate = new Date(deposit.fecha_registro);
-        if (isNaN(registroDate)) return false;
+    // Ya no filtramos localmente por período porque App.jsx nos envía los datos pre-filtrados
+    // Solo mantenemos el filtro local para búsqueda, estado y fecha específica
 
-        switch (filterPeriod) {
-          case "today":
-            return registroDate.toDateString() === now.toDateString();
-          case "week": {
-            const startOfWeek = new Date(now);
-            startOfWeek.setDate(
-              now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1)
-            );
-            startOfWeek.setHours(0, 0, 0, 0);
-            const endOfWeek = new Date(startOfWeek);
-            endOfWeek.setDate(startOfWeek.getDate() + 7);
-            return registroDate >= startOfWeek && registroDate < endOfWeek;
-          }
-          case "month":
-            return (
-              registroDate.getMonth() === now.getMonth() &&
-              registroDate.getFullYear() === now.getFullYear()
-            );
-          case "year":
-            return registroDate.getFullYear() === now.getFullYear();
-          default:
-            return true;
-        }
-      });
-    }
-
-    // Filtro por fecha específica
+    // Filtro por fecha específica (solo cuando se selecciona una fecha específica)
     if (specificDate) {
       console.log("📅 TABLE: Aplicando filtro por fecha:", specificDate);
       filtered = filtered.filter((deposit) => {
@@ -147,7 +123,7 @@ const TableView = ({
     }
 
     setFilteredDeposits(filtered);
-  }, [deposits, searchTerm, filterStatus, filterPeriod, specificDate]);
+  }, [deposits, searchTerm, filterStatus, specificDate]); // Removimos filterPeriod ya que ahora se maneja en App.jsx
 
   const handleEditClick = (deposit) => {
     setModalEditMode("fields-only");
@@ -435,16 +411,48 @@ const TableView = ({
               <Calendar size={14} className="text-gray-400" />
               <select
                 value={filterPeriod}
-                onChange={(e) => setFilterPeriod(e.target.value)}
+                onChange={(e) => {
+                  setFilterPeriod(e.target.value);
+                  if (onFetchDepositsByPeriod) {
+                    // Si se selecciona "month", enviar el mes seleccionado
+                    const period = e.target.value === "month" ? `month:${selectedMonth}` : e.target.value;
+                    onFetchDepositsByPeriod(period);
+                    console.log(
+                      "🔄 TableView: Solicitando depósitos por período:",
+                      period
+                    );
+                  }
+                }}
                 className="border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
               >
                 <option value="all">Todo el tiempo</option>
                 <option value="today">Hoy</option>
                 <option value="week">Esta Semana</option>
-                <option value="month">Este Mes</option>
-                <option value="year">Este Año</option>
+                <option value="month">Seleccionar Mes</option>
               </select>
             </div>
+
+            {/* Selector de mes - solo visible cuando filterPeriod es "month" */}
+            {filterPeriod === "month" && (
+              <div className="flex items-center space-x-2">
+                <Calendar size={14} className="text-gray-400" />
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => {
+                    setSelectedMonth(e.target.value);
+                    if (onFetchDepositsByPeriod) {
+                      onFetchDepositsByPeriod(`month:${e.target.value}`);
+                      console.log(
+                        "🔄 TableView: Solicitando depósitos del mes:",
+                        e.target.value
+                      );
+                    }
+                  }}
+                  className="border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                />
+              </div>
+            )}
             <div className="flex items-center space-x-2">
               <Calendar size={14} className="text-gray-400" />
               <input
@@ -476,7 +484,19 @@ const TableView = ({
               />
               {specificDate && (
                 <button
-                  onClick={() => setSpecificDate("")}
+                  onClick={() => {
+                    setSpecificDate("");
+                    setFilterPeriod("all");
+                    console.log(
+                      "🧹 TABLE: Limpiando filtros - cargando todos los depósitos"
+                    );
+                    if (onFetchDepositsByPeriod) {
+                      onFetchDepositsByPeriod("all");
+                    }
+                    if (onSelectedDateChange) {
+                      onSelectedDateChange(null);
+                    }
+                  }}
                   className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                   title="Limpiar fecha"
                 >

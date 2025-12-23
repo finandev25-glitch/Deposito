@@ -472,6 +472,122 @@ function App() {
     }
   }, [supabase, currentUser, isSupabaseConnected]);
 
+  // Función para cargar depósitos por período específico
+  const fetchDepositsByPeriod = useCallback(
+    async (period) => {
+      console.log("🔄 App: Cargando depósitos por período:", period);
+
+      if (!supabase || !currentUser || !isSupabaseConnected) {
+        console.log("⚠️ No se puede cargar depósitos - falta conexión");
+        return;
+      }
+
+      try {
+        let query = supabase
+          .from("depositos")
+          .select(DEPOSIT_FULL_QUERY_STRING);
+
+        const now = new Date();
+
+        // Manejar período de mes específico (formato: "month:YYYY-MM")
+        if (period.startsWith("month:")) {
+          const monthValue = period.split(":")[1]; // "2025-12"
+          const [year, month] = monthValue.split("-").map(Number);
+
+          const startOfMonth = new Date(year, month - 1, 1);
+          const endOfMonth = new Date(year, month, 0);
+
+          const startDate = toLocalISOString(startOfMonth);
+          const endDate = toLocalISOString(endOfMonth);
+
+          console.log(`📅 Filtrando mes específico: ${monthValue} (${startDate} a ${endDate})`);
+
+          query = query
+            .gte("fecha_solo_date", startDate)
+            .lte("fecha_solo_date", endDate);
+        } else {
+          switch (period) {
+            case "today": {
+              const today = toLocalISOString(now);
+              query = query.eq("fecha_solo_date", today);
+              console.log(`📅 Filtrando hoy: ${today}`);
+              break;
+            }
+            case "week": {
+              // Semana actual: Lunes a Domingo
+              const dayOfWeek = now.getDay(); // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
+              const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Si es domingo, retroceder 6 días
+
+              const startOfWeek = new Date(now);
+              startOfWeek.setDate(now.getDate() - daysFromMonday);
+              startOfWeek.setHours(0, 0, 0, 0);
+
+              const endOfWeek = new Date(startOfWeek);
+              endOfWeek.setDate(startOfWeek.getDate() + 6);
+              endOfWeek.setHours(23, 59, 59, 999);
+
+              const startDate = toLocalISOString(startOfWeek);
+              const endDate = toLocalISOString(endOfWeek);
+
+              console.log(`📅 Filtrando semana: ${startDate} a ${endDate}`);
+
+              query = query
+                .gte("fecha_solo_date", startDate)
+                .lte("fecha_solo_date", endDate);
+              break;
+            }
+            case "month": {
+              // Mes actual
+              const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+              const endOfMonth = new Date(
+                now.getFullYear(),
+                now.getMonth() + 1,
+                0
+              );
+
+              const startDate = toLocalISOString(startOfMonth);
+              const endDate = toLocalISOString(endOfMonth);
+
+              console.log(`📅 Filtrando mes actual: ${startDate} a ${endDate}`);
+
+              query = query
+                .gte("fecha_solo_date", startDate)
+                .lte("fecha_solo_date", endDate);
+              break;
+            }
+            default:
+              // Para "all", cargar últimos 1000 registros
+              console.log("📅 Filtrando: Todo el tiempo (últimos 1000)");
+              query = query.limit(1000);
+              break;
+          }
+        }
+
+        const { data, error } = await query.order("fecha_registro", {
+          ascending: false,
+        });
+
+        if (error) {
+          console.error("❌ Error cargando depósitos por período:", error);
+          return;
+        }
+
+        setDeposits(data || []);
+        setCurrentSelectedDate(null); // Limpiar fecha específica
+        console.log(
+          `✅ Depósitos del período '${period}' cargados:`,
+          data?.length || 0
+        );
+      } catch (error) {
+        console.error(
+          "💥 Error crítico cargando depósitos por período:",
+          error
+        );
+      }
+    },
+    [supabase, currentUser, isSupabaseConnected]
+  );
+
   // Carga inicial
   useEffect(() => {
     console.log("🔍 Verificando estado de carga...", {
@@ -1392,6 +1508,7 @@ function App() {
                     deposits={depositsWithFullData}
                     onUpdateDeposit={handleUpdateDeposit}
                     onFetchDepositsByDate={fetchDepositsByDate}
+                    onFetchDepositsByPeriod={fetchDepositsByPeriod}
                     onSelectedDateChange={handleSelectedDateChange}
                     empresas={empresas}
                     bancos={bancos}
