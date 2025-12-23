@@ -564,8 +564,16 @@ function App() {
           }
         }
 
+        console.log("🔍 Ejecutando query...");
         const { data, error } = await query.order("fecha_registro", {
           ascending: false,
+        });
+
+        console.log("📊 Respuesta de query:", {
+          error: error,
+          dataLength: data?.length,
+          firstItem: data?.[0],
+          period: period
         });
 
         if (error) {

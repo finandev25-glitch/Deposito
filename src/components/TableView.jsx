@@ -32,8 +32,14 @@ const TableView = ({
   const [filteredDeposits, setFilteredDeposits] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [filterPeriod, setFilterPeriod] = useState("all");
+  const [filterPeriod, setFilterPeriod] = useState(() => {
+    // Restaurar filtro de período desde localStorage
+    return localStorage.getItem("tableView_filterPeriod") || "all";
+  });
   const [selectedMonth, setSelectedMonth] = useState(() => {
+    // Restaurar mes seleccionado desde localStorage o usar mes actual
+    const saved = localStorage.getItem("tableView_selectedMonth");
+    if (saved) return saved;
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
@@ -63,6 +69,15 @@ const TableView = ({
       minute: "2-digit",
     });
   };
+
+  // Guardar filtros en localStorage para persistencia
+  React.useEffect(() => {
+    localStorage.setItem("tableView_filterPeriod", filterPeriod);
+  }, [filterPeriod]);
+
+  React.useEffect(() => {
+    localStorage.setItem("tableView_selectedMonth", selectedMonth);
+  }, [selectedMonth]);
 
   // useEffect para cargar datos cuando cambia el período a "month"
   React.useEffect(() => {
