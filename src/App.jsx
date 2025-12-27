@@ -566,28 +566,56 @@ function App() {
           }
         }
 
-        console.log("🔍 Ejecutando query...");
-        const { data, error } = await query.order("fecha_registro", {
-          ascending: false,
-        });
+        console.log("🔍 Ejecutando query con paginación...");
+
+        // Paginación para obtener más de 1000 registros
+        let allData = [];
+        let page = 0;
+        const pageSize = 1000;
+        let hasMore = true;
+
+        while (hasMore) {
+          const from = page * pageSize;
+          const to = from + pageSize - 1;
+
+          console.log(`📄 Cargando página ${page + 1} (registros ${from}-${to})...`);
+
+          const { data, error, count } = await query
+            .order("fecha_registro", { ascending: false })
+            .range(from, to);
+
+          if (error) {
+            console.error("❌ Error cargando depósitos por período:", error);
+            return;
+          }
+
+          allData = [...allData, ...(data || [])];
+
+          console.log(`✅ Página ${page + 1} cargada: ${data?.length || 0} registros`);
+
+          // Si recibimos menos registros que el pageSize, ya no hay más
+          hasMore = data && data.length === pageSize;
+          page++;
+
+          // Seguridad: máximo 50 páginas (50,000 registros)
+          if (page >= 50) {
+            console.warn("⚠️ Alcanzado límite máximo de 50 páginas");
+            hasMore = false;
+          }
+        }
 
         console.log("📊 Respuesta de query:", {
-          error: error,
-          dataLength: data?.length,
-          firstItem: data?.[0],
+          totalPages: page,
+          dataLength: allData.length,
+          firstItem: allData[0],
           period: period
         });
 
-        if (error) {
-          console.error("❌ Error cargando depósitos por período:", error);
-          return;
-        }
-
-        setDeposits(data || []);
+        setDeposits(allData);
         setCurrentSelectedDate(null); // Limpiar fecha específica
         console.log(
           `✅ Depósitos del período '${period}' cargados:`,
-          data?.length || 0
+          allData.length
         );
       } catch (error) {
         console.error(
