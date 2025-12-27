@@ -504,12 +504,13 @@ function App() {
 
           query = query
             .gte("fecha_solo_date", startDate)
-            .lte("fecha_solo_date", endDate);
+            .lte("fecha_solo_date", endDate)
+            .limit(50000); // Límite alto para mes específico
         } else {
           switch (period) {
             case "today": {
               const today = toLocalISOString(now);
-              query = query.eq("fecha_solo_date", today);
+              query = query.eq("fecha_solo_date", today).limit(50000);
               console.log(`📅 Filtrando hoy: ${today}`);
               break;
             }
@@ -533,7 +534,8 @@ function App() {
 
               query = query
                 .gte("fecha_solo_date", startDate)
-                .lte("fecha_solo_date", endDate);
+                .lte("fecha_solo_date", endDate)
+                .limit(50000);
               break;
             }
             case "month": {
@@ -552,7 +554,8 @@ function App() {
 
               query = query
                 .gte("fecha_solo_date", startDate)
-                .lte("fecha_solo_date", endDate);
+                .lte("fecha_solo_date", endDate)
+                .limit(50000);
               break;
             }
             default:
