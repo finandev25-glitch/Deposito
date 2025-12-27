@@ -174,6 +174,11 @@ const TableView = ({
         Empresa: deposit.empresa?.nombre || "",
         Sucursal: deposit.sucursal?.nombre || "",
         Contacto: deposit.trabajador?.nombre || "",
+        "Teléfono Contacto": deposit.trabajador?.telefono_origen
+          ? (deposit.trabajador.telefono_origen.startsWith('51')
+              ? deposit.trabajador.telefono_origen.slice(2)
+              : deposit.trabajador.telefono_origen)
+          : "",
         "Anexo Banco": deposit.anexo || "",
         "Nro Operación Banco": deposit.numero_operacion_banco || "",
         "Fecha Depósito": formatDate(deposit.fecha_deposito),
@@ -186,6 +191,7 @@ const TableView = ({
         "Nombre Cliente": deposit.cliente || "",
         "RUC/DNI Cliente": deposit.ruc_cliente || "",
         "Ref. Cliente": deposit.referencia_cliente || "",
+        "URL Voucher": deposit.imagen_voucher || "",
       };
     });
 
@@ -574,6 +580,9 @@ const TableView = ({
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Ref. Cliente
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    URL Voucher
+                  </th>
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Acciones
                   </th>
@@ -596,6 +605,13 @@ const TableView = ({
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           {deposit.trabajador?.nombre || "-"}
                         </span>
+                        {deposit.trabajador?.telefono_origen && (
+                          <span className="text-xs text-blue-600 dark:text-blue-400 font-mono">
+                            📞 {deposit.trabajador.telefono_origen.startsWith('51')
+                              ? deposit.trabajador.telefono_origen.slice(2)
+                              : deposit.trabajador.telefono_origen}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
@@ -642,6 +658,23 @@ const TableView = ({
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                       {deposit.referencia_cliente || "-"}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                      {deposit.imagen_voucher ? (
+                        <a
+                          href={deposit.imagen_voucher}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 dark:text-blue-400 hover:underline truncate block max-w-xs"
+                          title={deposit.imagen_voucher}
+                        >
+                          {deposit.imagen_voucher.length > 40
+                            ? `${deposit.imagen_voucher.substring(0, 40)}...`
+                            : deposit.imagen_voucher}
+                        </a>
+                      ) : (
+                        "-"
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
                       <div className="flex items-center justify-center space-x-2">
