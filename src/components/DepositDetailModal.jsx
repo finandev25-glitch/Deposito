@@ -12,6 +12,7 @@ import useWhatsApp from "../hooks/useWhatsApp.js";
 import { useWhatsAppNotifications } from "../hooks/useWhatsAppNotifications.js";
 import whatsappService from "../services/whatsappService.js";
 import chatwootService from "../services/chatwootService.js";
+import yCloudService from "../services/yCloudService.js";
 import {
   X,
   User,
@@ -148,6 +149,11 @@ const DepositDetailModal = ({
   const [isSendingToChatwoot, setIsSendingToChatwoot] = useState(false);
   const [chatwootConfigs, setChatwootConfigs] = useState([]);
 
+  // Estados para configuración de mensajes
+  const [yCloudConfigId, setYCloudConfigId] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [yCloudConfigs, setYCloudConfigs] = useState([]);
+
   // Hook de WhatsApp
   const {
     loading: whatsappLoading,
@@ -157,9 +163,30 @@ const DepositDetailModal = ({
     sendDepositRejectedNotification,
   } = useWhatsApp();
 
-  const useGoogleDrive =
-    import.meta.env.VITE_GOOGLE_API_KEY &&
-    import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  // Función para formatear teléfono para WhatsApp URL
+  const formatPhoneForWhatsApp = (phone) => {
+    if (!phone) return "";
+    let cleaned = phone.replace(/\D/g, "");
+    if (cleaned.startsWith("0")) {
+      cleaned = cleaned.substring(1);
+    }
+    if (cleaned.length === 9 && cleaned.startsWith("9")) {
+      cleaned = "51" + cleaned;
+    }
+    return cleaned;
+  };
+
+  // Función para abrir WhatsApp Web
+  const openWhatsAppChat = () => {
+    const telefono =
+      deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
+    const formattedPhone = formatPhoneForWhatsApp(telefono);
+    if (!formattedPhone) {
+      alert("No hay número de teléfono disponible");
+      return;
+    }
+    window.open(`https://wa.me/${formattedPhone}`, "_blank");
+  };
   const isSupabaseConnected = supabase && currentUser;
   const isFieldsOnlyEdit = editMode === "fields-only";
 
@@ -197,7 +224,7 @@ const DepositDetailModal = ({
       if (deposit.chatwoot_conversation_id) {
         console.log(
           "✅ Seteando chatwootConversationId:",
-          deposit.chatwoot_conversation_id
+          deposit.chatwoot_conversation_id,
         );
         setChatwootConversationId(deposit.chatwoot_conversation_id);
       } else {
@@ -207,7 +234,7 @@ const DepositDetailModal = ({
       if (deposit.chatwoot_config_id) {
         console.log(
           "✅ Seteando chatwootConfigId:",
-          deposit.chatwoot_config_id
+          deposit.chatwoot_config_id,
         );
         setChatwootConfigId(deposit.chatwoot_config_id.toString());
       } else {
@@ -221,10 +248,10 @@ const DepositDetailModal = ({
       const relevantCuentas = cuentas.filter(
         (c) =>
           c.empresa_id === editableData.empresa_id &&
-          c.banco_id === editableData.banco_id
+          c.banco_id === editableData.banco_id,
       );
       const anexos = [...new Set(relevantCuentas.map((c) => c.anexo))].filter(
-        Boolean
+        Boolean,
       );
       setFilteredAnexos(anexos);
 
@@ -268,6 +295,38 @@ const DepositDetailModal = ({
     loadChatwootConfigs();
   }, [isSupabaseConnected]);
 
+  // Cargar configuraciones al montar el componente
+  useEffect(() => {
+    const loadYCloudConfigs = async () => {
+      if (!isSupabaseConnected) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("ycloud_config")
+          .select("*")
+          .eq("activo", true)
+          .order("alias");
+
+        if (error) {
+          console.error("Error cargando configuraciones:", error);
+          return;
+        }
+
+        setYCloudConfigs(data || []);
+
+        // Seleccionar la primera configuración por defecto si existe
+        if (data && data.length > 0) {
+          setYCloudConfigId(data[0].id.toString());
+          console.log("✅ Configuración por defecto:", data[0].alias);
+        }
+      } catch (error) {
+        console.error("Error al cargar configuraciones:", error);
+      }
+    };
+
+    loadYCloudConfigs();
+  }, [isSupabaseConnected]);
+
   // Calcular tiempo transcurrido y hora de recibido
   useEffect(() => {
     if (!deposit.fecha_registro) return;
@@ -279,7 +338,7 @@ const DepositDetailModal = ({
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
-      })
+      }),
     );
 
     // Función para calcular tiempo transcurrido
@@ -352,7 +411,7 @@ const DepositDetailModal = ({
 
     if (!isSupabaseConnected) {
       console.log(
-        "⚠️  Modo simulado: comprobación de duplicados no disponible"
+        "⚠️  Modo simulado: comprobación de duplicados no disponible",
       );
       setTimeout(() => {
         setCheckResult({
@@ -389,7 +448,7 @@ const DepositDetailModal = ({
           trabajador:trabajador_sucursal_id(nombre),
           empresa:empresa_id(nombre),
           banco:banco_id(nombre, abreviatura)
-        `
+        `,
         )
         .eq("monto", editableData.monto)
         .eq("moneda", editableData.moneda)
@@ -422,7 +481,7 @@ const DepositDetailModal = ({
       // Verificar duplicados en los resultados
       const normalizedInputOp = editableData.numero_operacion_banco.replace(
         /^0+/,
-        ""
+        "",
       );
 
       // Filtrar todos los duplicados, no solo el primero
@@ -431,7 +490,7 @@ const DepositDetailModal = ({
         if (d.numero_operacion_banco) {
           const normalizedDbOpBanco = d.numero_operacion_banco.replace(
             /^0+/,
-            ""
+            "",
           );
           if (normalizedDbOpBanco === normalizedInputOp) return true;
         }
@@ -468,7 +527,7 @@ const DepositDetailModal = ({
     } catch (criticalError) {
       console.error(
         "💥 Error crítico en comprobación de duplicados:",
-        criticalError
+        criticalError,
       );
       setCheckResult({
         checked: true,
@@ -512,7 +571,7 @@ const DepositDetailModal = ({
       console.log("🎯 buildUpdatePayload resultado final:", finalPayload);
       return finalPayload;
     },
-    [editableData]
+    [editableData],
   );
 
   const handleConfirmDeposit = () => {
@@ -550,7 +609,7 @@ const DepositDetailModal = ({
     // Si faltan campos, mostrar error y no continuar
     if (camposRequeridos.length > 0) {
       const mensaje = `Por favor, seleccione los siguientes campos requeridos: ${camposRequeridos.join(
-        ", "
+        ", ",
       )}`;
       alert(mensaje);
       console.error("❌ Validación fallida:", {
@@ -637,14 +696,14 @@ const DepositDetailModal = ({
               } else {
                 console.warn(
                   "⚠️ No se pudo enviar confirmación a sucursal:",
-                  result.error
+                  result.error,
                 );
               }
             })
             .catch((error) => {
               console.warn(
                 "❌ Error enviando confirmación WhatsApp a sucursal:",
-                error
+                error,
               );
             });
         } else {
@@ -730,12 +789,8 @@ const DepositDetailModal = ({
       console.log("✅ Marca de antiguo sincronizada con servidor");
       console.log("📦 Respuesta de Supabase:", data);
 
-      // Si se marcó como antiguo Y tiene datos de Chatwoot, enviar mensaje automático
-      if (
-        newValue &&
-        deposit.chatwoot_conversation_id &&
-        deposit.chatwoot_config_id
-      ) {
+      // Si se marcó como antiguo Y tiene configuración, enviar mensaje automático
+      if (newValue && yCloudConfigId) {
         console.log("📨 Enviando mensaje automático de depósito antiguo...");
 
         const mensajeAntiguo = `⚠️ *Voucher en Revisión*
@@ -747,38 +802,54 @@ El depósito es de día(s) anterior(es), se está realizando los cruces de infor
 Gracias por su comprensión.`;
 
         try {
-          const chatwootConversationId =
-            deposit.chatwoot_conversation_id.toString();
-          const chatwootConfigId = deposit.chatwoot_config_id.toString();
+          // Obtener teléfono del trabajador o sucursal
+          const telefonoContacto =
+            deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
 
-          // Si el depósito ya tiene un mensaje previo, responder a ese mensaje
-          const result = deposit.chatwoot_message_id
-            ? await chatwootService.replyToMessage({
-                configId: chatwootConfigId,
-                conversationId: chatwootConversationId,
-                content: mensajeAntiguo,
-                inReplyTo: deposit.chatwoot_message_id,
-              })
-            : await chatwootService.sendMessage({
-                configId: chatwootConfigId,
-                conversationId: chatwootConversationId,
-                content: mensajeAntiguo,
-                messageType: "outgoing",
-              });
+          if (telefonoContacto) {
+            // Formatear el número de teléfono para WhatsApp
+            const formatPhoneNumber = (phone) => {
+              let cleaned = phone.replace(/[\s\-\(\)]/g, "");
+              if (cleaned.startsWith("+")) return cleaned;
+              if (cleaned.startsWith("51") && cleaned.length >= 11)
+                return "+" + cleaned;
+              if (cleaned.length === 9 && cleaned.startsWith("9"))
+                return "+51" + cleaned;
+              return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
+            };
 
-          if (result.success) {
-            console.log(
-              "✅ Mensaje de depósito antiguo enviado por Chatwoot:",
-              result.data?.id
-            );
-            // Mostrar alerta con el mensaje enviado
-            alert(`✅ Mensaje enviado por Chatwoot:\n\n${mensajeAntiguo}`);
+            const telefonoFormateado = formatPhoneNumber(telefonoContacto);
+
+            const result = await yCloudService.sendTextMessage({
+              configId: yCloudConfigId,
+              to: telefonoFormateado,
+              text: mensajeAntiguo,
+              replyToMessageId: deposit.chatwoot_message_id || undefined,
+            });
+
+            if (result.success) {
+              console.log(
+                "✅ Mensaje de depósito antiguo enviado:",
+                result.data?.id,
+                deposit.chatwoot_message_id
+                  ? "(como respuesta)"
+                  : "(mensaje nuevo)",
+              );
+              alert(`✅ Mensaje enviado:\n\n${mensajeAntiguo}`);
+            } else {
+              console.warn(
+                "⚠️ No se pudo enviar mensaje de depósito antiguo:",
+                result.message,
+              );
+              alert(`⚠️ No se pudo enviar el mensaje:\n${result.message}`);
+            }
           } else {
             console.warn(
-              "⚠️ No se pudo enviar mensaje de depósito antiguo:",
-              result.message
+              "⚠️ No hay teléfono disponible para enviar mensaje de depósito antiguo",
             );
-            alert(`⚠️ No se pudo enviar el mensaje:\n${result.message}`);
+            alert(
+              "⚠️ Depósito marcado como antiguo, pero no se pudo enviar mensaje (sin teléfono).",
+            );
           }
         } catch (error) {
           console.warn("❌ Error enviando mensaje de depósito antiguo:", error);
@@ -800,7 +871,7 @@ Gracias por su comprensión.`;
         depositId: deposit.id,
         motivo: reason,
         validadoPor: currentUser.nombre,
-      }
+      },
     );
 
     // Para rechazar, solo actualizamos el estado y motivo, sin modificar otros campos
@@ -825,8 +896,8 @@ Gracias por su comprensión.`;
       console.warn("Error preparando notificación de rechazo WhatsApp:", error);
     }
 
-    // Enviar mensaje de rechazo por Chatwoot si hay datos de conversación
-    if (chatwootConfigId && chatwootConversationId) {
+    // Enviar mensaje de rechazo si hay configuración
+    if (yCloudConfigId) {
       try {
         const mensajeRechazo = `❌ *DEPÓSITO RECHAZADO*
 
@@ -835,54 +906,62 @@ Gracias por su comprensión.`;
 📝 *Motivo del rechazo:*
 ${reason}`;
 
-        console.log("📱 Enviando rechazo por Chatwoot:", {
-          configId: chatwootConfigId,
-          conversationId: chatwootConversationId,
-          hasMessageId: !!deposit.chatwoot_message_id,
+        console.log("📱 Enviando rechazo:", {
+          configId: yCloudConfigId,
         });
 
-        // Si el depósito ya tiene un mensaje previo, responder a ese mensaje
-        const result = deposit.chatwoot_message_id
-          ? await chatwootService.replyToMessage({
-              configId: chatwootConfigId,
-              conversationId: chatwootConversationId,
-              content: mensajeRechazo,
-              inReplyTo: deposit.chatwoot_message_id,
-            })
-          : await chatwootService.sendMessage({
-              configId: chatwootConfigId,
-              conversationId: chatwootConversationId,
-              content: mensajeRechazo,
-              messageType: "outgoing",
-            });
+        // Obtener teléfono del trabajador o sucursal
+        const telefonoContacto =
+          deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
 
-        if (result.success) {
-          console.log("✅ Rechazo enviado por Chatwoot:", result.data?.id);
-
-          // Actualizar el payload con el message_id del rechazo
-          finalPayload = {
-            ...finalPayload,
-            chatwoot_message_id: result.data?.id
-              ? result.data.id.toString()
-              : deposit.chatwoot_message_id,
+        if (telefonoContacto) {
+          // Formatear el número de teléfono para WhatsApp
+          const formatPhoneNumber = (phone) => {
+            let cleaned = phone.replace(/[\s\-\(\)]/g, "");
+            if (cleaned.startsWith("+")) return cleaned;
+            if (cleaned.startsWith("51") && cleaned.length >= 11)
+              return "+" + cleaned;
+            if (cleaned.length === 9 && cleaned.startsWith("9"))
+              return "+51" + cleaned;
+            return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
           };
+
+          const telefonoFormateado = formatPhoneNumber(telefonoContacto);
+
+          const result = await yCloudService.sendTextMessage({
+            configId: yCloudConfigId,
+            to: telefonoFormateado,
+            text: mensajeRechazo,
+            replyToMessageId: deposit.chatwoot_message_id || undefined,
+          });
+
+          if (result.success) {
+            console.log(
+              "✅ Rechazo enviado:",
+              result.data?.id,
+              deposit.chatwoot_message_id
+                ? "(como respuesta)"
+                : "(mensaje nuevo)",
+            );
+            alert(`✅ Rechazo enviado:\n\n${mensajeRechazo}`);
+          } else {
+            console.warn("⚠️ No se pudo enviar rechazo:", result.message);
+            alert(`⚠️ No se pudo enviar el rechazo:\n${result.message}`);
+          }
         } else {
           console.warn(
-            "⚠️ No se pudo enviar rechazo por Chatwoot:",
-            result.message
+            "⚠️ No hay teléfono disponible para enviar mensaje de rechazo",
+          );
+          alert(
+            "⚠️ Depósito rechazado, pero no se pudo enviar mensaje (sin teléfono).",
           );
         }
       } catch (error) {
-        console.warn("❌ Error enviando rechazo por Chatwoot:", error);
+        console.warn("❌ Error enviando rechazo:", error);
+        alert(`❌ Error al enviar rechazo:\n${error.message}`);
       }
     } else {
-      console.warn(
-        "⚠️ No se envió mensaje de rechazo - Faltan datos de Chatwoot:",
-        {
-          chatwootConfigId,
-          chatwootConversationId,
-        }
-      );
+      console.warn("⚠️ No se envió mensaje de rechazo - Falta configuración");
     }
 
     // Actualizar el depósito con el payload final preservando las relaciones
@@ -906,7 +985,7 @@ ${reason}`;
           chatwoot_conversation_id: deposit.chatwoot_conversation_id,
           chatwoot_message_id: deposit.chatwoot_message_id,
         },
-      }
+      },
     );
 
     // Validar campos requeridos del depósito
@@ -931,7 +1010,7 @@ ${reason}`;
     // Validar datos de Chatwoot (de la BD o del estado)
     if (!chatwootConfigId) {
       camposRequeridos.push(
-        "Configuración de Chatwoot (no disponible en la BD)"
+        "Configuración de Chatwoot (no disponible en la BD)",
       );
     }
 
@@ -942,7 +1021,7 @@ ${reason}`;
     // Si faltan campos, mostrar error y no continuar
     if (camposRequeridos.length > 0) {
       const mensaje = `Por favor, complete los siguientes campos requeridos: ${camposRequeridos.join(
-        ", "
+        ", ",
       )}`;
       alert(mensaje);
       console.error("❌ Validación fallida:", {
@@ -1022,7 +1101,7 @@ Este depósito debe tener datos de Chatwoot guardados.`;
           editableData.numero_operacion_banco || deposit.numero_operacion
         }
 💰 *Importe:* ${editableData.moneda} ${parseFloat(editableData.monto).toFixed(
-          2
+          2,
         )}
 
 El depósito ha sido validado y confirmado exitosamente.
@@ -1072,12 +1151,12 @@ _Mensaje automático del sistema de control de depósitos_`;
           });
 
           alert(
-            "✅ Depósito confirmado y mensaje enviado por Chatwoot exitosamente"
+            "✅ Depósito confirmado y mensaje enviado por Chatwoot exitosamente",
           );
         } else {
           console.warn(
             "⚠️ No se pudo enviar mensaje por Chatwoot:",
-            result.error
+            result.error,
           );
 
           // Actualizar el depósito sin message_id preservando relaciones
@@ -1087,7 +1166,7 @@ _Mensaje automático del sistema de control de depósitos_`;
           });
 
           alert(
-            `⚠️ Depósito confirmado, pero hubo un error al enviar por Chatwoot: ${result.message}`
+            `⚠️ Depósito confirmado, pero hubo un error al enviar por Chatwoot: ${result.message}`,
           );
         }
       } else {
@@ -1113,6 +1192,274 @@ _Mensaje automático del sistema de control de depósitos_`;
       alert(`❌ Error enviando mensaje por Chatwoot: ${error.message}`);
     } finally {
       setIsSendingToChatwoot(false);
+    }
+
+    onClose();
+  };
+
+  const handleConfirmDepositWithMessage = async () => {
+    console.log(
+      "🔄 handleConfirmDepositWithMessage ejecutado - Inicio validación",
+      {
+        yCloudConfigId,
+        yCloudConfigs: yCloudConfigs.length,
+        editableData: {
+          empresa_id: editableData.empresa_id,
+          banco_id: editableData.banco_id,
+          anexo: editableData.anexo,
+          moneda: editableData.moneda,
+        },
+        sucursal: deposit.sucursal,
+        trabajador: deposit.trabajador,
+        sucursalTelefono:
+          deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono,
+      },
+    );
+
+    // ⭐ ANÁLISIS COMPLETO DE TELÉFONOS - FORZAR LOG
+    console.log("🔍 DEBUG - ANÁLISIS COMPLETO DE TELÉFONOS:", {
+      deposit_completo: deposit,
+      trabajador: deposit.trabajador,
+      telefono_origen: deposit.trabajador?.telefono_origen,
+      sucursal: deposit.sucursal,
+      sucursal_telefono: deposit.sucursal?.telefono,
+      telefonoDisponible:
+        deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono,
+      todas_las_propiedades_deposit: Object.keys(deposit),
+      todas_las_propiedades_trabajador: deposit.trabajador
+        ? Object.keys(deposit.trabajador)
+        : null,
+      todas_las_propiedades_sucursal: deposit.sucursal
+        ? Object.keys(deposit.sucursal)
+        : null,
+    });
+
+    // Validar campos requeridos del depósito
+    const camposRequeridos = [];
+
+    if (!editableData.empresa_id) {
+      camposRequeridos.push("Empresa");
+    }
+
+    if (!editableData.banco_id) {
+      camposRequeridos.push("Banco");
+    }
+
+    if (!editableData.anexo) {
+      camposRequeridos.push("Anexo");
+    }
+
+    if (!editableData.moneda) {
+      camposRequeridos.push("Moneda");
+    }
+
+    // Validar datos de configuración
+    if (!yCloudConfigId) {
+      camposRequeridos.push("Configuración de mensaje");
+    }
+
+    // Validar que tenga teléfono (del trabajador o de la sucursal)
+    const telefonoDisponible =
+      deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
+
+    if (!telefonoDisponible) {
+      camposRequeridos.push("Teléfono de trabajador de sucursal");
+    }
+
+    // Si faltan campos, mostrar error y no continuar
+    if (camposRequeridos.length > 0) {
+      const mensaje = `Por favor, complete los siguientes campos requeridos: ${camposRequeridos.join(
+        ", ",
+      )}`;
+      alert(mensaje);
+      console.error("❌ Validación fallida:", {
+        camposRequeridos,
+        editableData,
+        yCloudConfigId,
+        sucursalTelefono: deposit.sucursal?.telefono,
+        telefonoDisponible,
+      });
+      return;
+    }
+
+    console.log("✅ Validación exitosa, confirmando depósito...");
+
+    const payload = buildUpdatePayload({
+      estado: "validado",
+      motivo_rechazo: null,
+      validado_por: currentUser.id,
+      fecha_validacion: new Date().toISOString(),
+    });
+
+    console.log("📤 Enviando actualización del depósito:", {
+      depositId: deposit.id,
+      payload: payload,
+    });
+
+    // Enviar confirmación
+    setIsSending(true);
+
+    try {
+      const empresa = empresas?.find((e) => e.id === editableData.empresa_id);
+      const banco = bancos?.find((b) => b.id === editableData.banco_id);
+
+      console.log("🔍 Datos encontrados:", {
+        empresa: empresa ? { id: empresa.id, nombre: empresa.nombre } : null,
+        banco: banco ? { id: banco.id, nombre: banco.nombre } : null,
+      });
+
+      if (empresa && banco) {
+        // Formatear fecha correctamente sin problemas de zona horaria
+        const formatearFechaDeposito = (fechaString) => {
+          const [year, month, day] = fechaString.split("T")[0].split("-");
+          return `${day}/${month}/${year}`;
+        };
+
+        // Formatear mensaje de confirmación
+        const mensajeConfirmacion = `🎉 *DEPÓSITO CONFIRMADO*
+
+✅ *Empresa:* ${empresa.nombre}
+📍 *Sucursal:* ${deposit.sucursal?.nombre || "-"}
+🏦 *Banco:* ${banco.nombre}
+🔢 *Anexo:* ${editableData.anexo}
+📅 *Fecha Depósito:* ${formatearFechaDeposito(editableData.fecha_deposito)}
+🆔 *Operación:* ${
+          editableData.numero_operacion_banco || deposit.numero_operacion
+        }
+💰 *Importe:* ${editableData.moneda} ${parseFloat(editableData.monto).toFixed(
+          2,
+        )}
+
+El depósito ha sido validado y confirmado exitosamente.
+
+_Mensaje automático del sistema de control de depósitos_`;
+
+        console.log("📱 Enviando mensaje:", {
+          configId: yCloudConfigId,
+          empresa: empresa.nombre,
+          banco: banco.nombre,
+          mensaje: mensajeConfirmacion.substring(0, 100) + "...",
+        });
+
+        // Obtener el número de teléfono del trabajador
+        const sucursalTelefono =
+          deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
+
+        console.log("📞 Datos de teléfono:", {
+          trabajador: deposit.trabajador,
+          telefono_origen: deposit.trabajador?.telefono_origen,
+          sucursal_telefono: deposit.sucursal?.telefono,
+          telefono_final: sucursalTelefono,
+        });
+
+        if (sucursalTelefono) {
+          // Formatear el número de teléfono para WhatsApp
+          const formatPhoneNumber = (phone) => {
+            // Remover espacios, guiones y paréntesis
+            let cleaned = phone.replace(/[\s\-\(\)]/g, "");
+
+            // Si ya tiene +, mantenerlo
+            if (cleaned.startsWith("+")) {
+              return cleaned;
+            }
+
+            // Si empieza con 51 (código de Perú), agregar +
+            if (cleaned.startsWith("51") && cleaned.length >= 11) {
+              return "+" + cleaned;
+            }
+
+            // Si es número peruano sin código de país (9 dígitos), agregar +51
+            if (cleaned.length === 9 && cleaned.startsWith("9")) {
+              return "+51" + cleaned;
+            }
+
+            // Para otros casos, agregar + al inicio si no lo tiene
+            return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
+          };
+
+          const telefonoFormateado = formatPhoneNumber(sucursalTelefono);
+
+          console.log("📞 Teléfono formateado:", telefonoFormateado);
+          console.log("🚀 Iniciando envío...");
+
+          // Enviar mensaje (como respuesta al mensaje original si existe wamid)
+          const result = await yCloudService.sendTextMessage({
+            configId: yCloudConfigId,
+            to: telefonoFormateado,
+            text: mensajeConfirmacion,
+            replyToMessageId: deposit.chatwoot_message_id || undefined,
+          });
+
+          console.log("📨 Respuesta:", result);
+
+          if (result.success) {
+            console.log("✅ Confirmación enviada:", {
+              messageId: result.data?.id,
+              status: result.data?.status,
+              asReply: !!deposit.chatwoot_message_id,
+            });
+
+            // Actualizar el depósito preservando relaciones
+            onUpdateDeposit({
+              ...deposit,
+              ...payload,
+            });
+
+            alert("✅ Depósito confirmado y mensaje enviado exitosamente");
+          } else {
+            console.warn(
+              "⚠️ No se pudo enviar mensaje:",
+              result.error || result.message,
+            );
+
+            // Actualizar el depósito preservando relaciones
+            onUpdateDeposit({
+              ...deposit,
+              ...payload,
+            });
+
+            alert(
+              `⚠️ Depósito confirmado, pero hubo un error al enviar mensaje: ${result.message || result.error}`,
+            );
+          }
+        } else {
+          console.warn(
+            "⚠️ No hay teléfono disponible (ni en trabajador ni en sucursal)",
+          );
+
+          // Actualizar el depósito preservando relaciones
+          onUpdateDeposit({
+            ...deposit,
+            ...payload,
+          });
+
+          alert(
+            "✅ Depósito confirmado. No se envió mensaje (trabajador sin teléfono).",
+          );
+        }
+      } else {
+        console.error("❌ No se encontraron datos de empresa o banco");
+
+        // Actualizar el depósito preservando relaciones
+        onUpdateDeposit({
+          ...deposit,
+          ...payload,
+        });
+
+        alert("⚠️ Depósito confirmado, pero faltan datos de empresa o banco");
+      }
+    } catch (error) {
+      console.error("❌ Error enviando confirmación:", error);
+
+      // Actualizar el depósito preservando relaciones
+      onUpdateDeposit({
+        ...deposit,
+        ...payload,
+      });
+
+      alert(`❌ Error enviando mensaje: ${error.message}`);
+    } finally {
+      setIsSending(false);
     }
 
     onClose();
@@ -1207,6 +1554,17 @@ _Mensaje automático del sistema de control de depósitos_`;
     editableData.moneda &&
     chatwootConfigId;
 
+  // Verificar si se puede confirmar
+  const canConfirmYCloud =
+    checkResult.checked &&
+    !checkResult.isDuplicate &&
+    !isChecking &&
+    editableData.empresa_id &&
+    editableData.banco_id &&
+    editableData.anexo &&
+    editableData.moneda &&
+    yCloudConfigId;
+
   const isFullEditDisabled =
     deposit.estado !== "pendiente" && deposit.estado !== "en_validacion";
 
@@ -1281,6 +1639,19 @@ _Mensaje automático del sistema de control de depósitos_`;
                 <span>{statusLabel}</span>
               </span>
 
+              {/* Botón para abrir WhatsApp Web */}
+              {(deposit.trabajador?.telefono_origen ||
+                deposit.sucursal?.telefono) && (
+                <button
+                  onClick={openWhatsAppChat}
+                  className="flex items-center space-x-2 px-2 md:px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+                  title="Abrir conversación en WhatsApp Web"
+                >
+                  <Phone className="h-4 w-4" />
+                  <span className="hidden md:inline">WhatsApp</span>
+                </button>
+              )}
+
               {/* Botones de Chatwoot */}
               {deposit.chatwoot_conversation_id &&
                 deposit.chatwoot_config_id && (
@@ -1297,7 +1668,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                       onClick={() => {
                         const chatwootUrl = buildChatwootWebUrl(
                           deposit.chatwoot_config_id,
-                          deposit.chatwoot_conversation_id
+                          deposit.chatwoot_conversation_id,
                         );
                         window.open(chatwootUrl, "_blank");
                       }}
@@ -1339,7 +1710,7 @@ _Mensaje automático del sistema de control de depósitos_`;
 
                 <div
                   className={`w-full bg-slate-50 dark:bg-slate-800/50 border border-gray-200 dark:border-gray-700 border-l-4 ${getCardBorderColor(
-                    "form"
+                    "form",
                   )} rounded-lg p-2 shadow-md dark:shadow-black/30 hover:shadow-lg hover:shadow-slate-500/50 dark:hover:shadow-slate-400/40 transition-shadow duration-300`}
                 >
                   <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
@@ -1643,7 +2014,7 @@ _Mensaje automático del sistema de control de depósitos_`;
 
                 <div
                   className={`w-full bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 border-l-4 ${getCardBorderColor(
-                    "solicitante"
+                    "solicitante",
                   )} rounded-lg p-2 shadow-md dark:shadow-black/30 hover:shadow-lg hover:shadow-indigo-500/50 dark:hover:shadow-indigo-400/40 transition-shadow duration-300`}
                 >
                   <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
@@ -1689,7 +2060,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                           <a
                             href={`https://wa.me/${deposit.trabajador.telefono_origen.replace(
                               /[^0-9]/g,
-                              ""
+                              "",
                             )}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -1883,21 +2254,17 @@ _Mensaje automático del sistema de control de depósitos_`;
                   <span>Rechazar</span>
                 </button>
                 <button
-                  onClick={handleConfirmDepositChatwoot}
-                  disabled={!canConfirmChatwoot || isSendingToChatwoot}
-                  className="px-4 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2"
-                  title="Confirmar y enviar por Chatwoot"
+                  onClick={handleConfirmDepositWithMessage}
+                  disabled={!canConfirmYCloud || isSending}
+                  className="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2"
+                  title="Confirmar depósito"
                 >
-                  {isSendingToChatwoot ? (
+                  {isSending ? (
                     <Loader2 className="animate-spin" size={12} />
                   ) : (
-                    <MessageCircle size={12} />
+                    <Phone size={12} />
                   )}
-                  <span>
-                    {isSendingToChatwoot
-                      ? "Enviando..."
-                      : "Confirmar (Chatwoot)"}
-                  </span>
+                  <span>{isSending ? "Enviando..." : "Confirmar"}</span>
                 </button>
               </>
             )}
@@ -2075,7 +2442,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                                   year: "numeric",
                                   hour: "2-digit",
                                   minute: "2-digit",
-                                }
+                                },
                               )}
                             </td>
                             <td className="p-3 text-gray-900 dark:text-gray-100">
@@ -2096,7 +2463,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                             <td className="p-3 text-gray-900 dark:text-gray-100">
                               {new Date(dup.fecha_deposito).toLocaleDateString(
                                 "es-ES",
-                                { timeZone: "UTC" }
+                                { timeZone: "UTC" },
                               )}
                             </td>
                           </tr>

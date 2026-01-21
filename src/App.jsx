@@ -29,6 +29,8 @@ import DocumentosView from "./components/DocumentosView";
 import ConfiguracionWhatsApp from "./components/ConfiguracionWhatsApp";
 import ConfiguracionChatWoot from "./components/ConfiguracionChatWoot";
 import EnviarMensajeChatWoot from "./components/EnviarMensajeChatWoot";
+import ConfiguracionYCloud from "./components/ConfiguracionYCloud";
+import EnviarMensajeYCloud from "./components/EnviarMensajeYCloud";
 import CambiarContrasena from "./components/CambiarContrasena";
 import RegularizarDepositos from "./components/RegularizarDepositos";
 import AuthPage from "./pages/AuthPage.jsx";
@@ -1646,6 +1648,26 @@ function App() {
                 element={
                   currentUser?.user_rol === "admin" ? (
                     <EnviarMensajeChatWoot />
+                  ) : (
+                    <Navigate to="/kanban" replace />
+                  )
+                }
+              />
+              <Route
+                path="/configuracion-ycloud"
+                element={
+                  currentUser?.user_rol === "admin" ? (
+                    <ConfiguracionYCloud />
+                  ) : (
+                    <Navigate to="/kanban" replace />
+                  )
+                }
+              />
+              <Route
+                path="/enviar-mensaje-ycloud"
+                element={
+                  currentUser?.user_rol === "admin" ? (
+                    <EnviarMensajeYCloud />
                   ) : (
                     <Navigate to="/kanban" replace />
                   )

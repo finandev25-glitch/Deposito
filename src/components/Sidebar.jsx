@@ -61,7 +61,18 @@ const SidebarContent = ({
       label: "Enviar ChatWoot",
       adminOnly: true,
     },
-
+    {
+      view: "configuracion-ycloud",
+      icon: Phone,
+      label: "Config YCloud",
+      adminOnly: true,
+    },
+    {
+      view: "enviar-mensaje-ycloud",
+      icon: Send,
+      label: "Enviar YCloud",
+      adminOnly: true,
+    },
     { view: "reportes", icon: PieChart, label: "Reportes" },
     { view: "documentos", icon: FileText, label: "Documentos" },
     { view: "regularizar-depositos", icon: FolderCheck, label: "Regularizar Depósitos" },

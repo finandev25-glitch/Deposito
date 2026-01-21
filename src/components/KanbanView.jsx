@@ -9,14 +9,12 @@ import React, {
 import { motion, AnimatePresence } from "framer-motion";
 import DepositCard from "./DepositCard";
 import DepositDetailModal from "./DepositDetailModal";
-import TrabajadoresBotOffModal from "./TrabajadoresBotOffModal";
 import ContactosModal from "./ContactosModal";
 import {
   Search,
   ChevronRight,
   ChevronDown,
   Calendar,
-  BotOff,
   MessageCircle,
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
@@ -87,8 +85,7 @@ const KanbanView = ({
   const [showNormales, setShowNormales] = useState(true);
   const [showAntiguos, setShowAntiguos] = useState(true);
 
-  // Estado para modal de trabajadores con bot Off
-  const [showBotOffModal, setShowBotOffModal] = useState(false);
+  // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
 
   // Fetch deposits cuando cambia la fecha específica (incluyendo montaje inicial)
@@ -508,26 +505,15 @@ const KanbanView = ({
             </p>
           </div>
 
-          {/* Botones Bot Off y Contactos junto al título */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowBotOffModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors shadow-sm"
-              title="Ver trabajadores con bot desactivado"
-            >
-              <BotOff size={18} />
-              <span className="hidden sm:inline">Bots Off</span>
-            </button>
-
-            <button
-              onClick={() => setShowContactosModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shadow-sm"
-              title="Ver todos los contactos"
-            >
-              <MessageCircle size={18} />
-              <span className="hidden sm:inline">Contactos</span>
-            </button>
-          </div>
+          {/* Botón Contactos junto al título */}
+          <button
+            onClick={() => setShowContactosModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
+            title="Ver todos los contactos"
+          >
+            <MessageCircle size={18} />
+            <span className="hidden sm:inline">Contactos</span>
+          </button>
         </div>
 
         {/* Filtros y búsqueda en una segunda línea */}
@@ -812,10 +798,6 @@ const KanbanView = ({
             onOpenVoucherWindow={onOpenVoucherWindow}
           />
         )}
-        {showBotOffModal && (
-          <TrabajadoresBotOffModal onClose={() => setShowBotOffModal(false)} />
-        )}
-
         {showContactosModal && (
           <ContactosModal onClose={() => setShowContactosModal(false)} />
         )}
