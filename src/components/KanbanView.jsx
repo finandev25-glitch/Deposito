@@ -85,6 +85,11 @@ const KanbanView = ({
   const [showNormales, setShowNormales] = useState(true);
   const [showAntiguos, setShowAntiguos] = useState(true);
 
+  // Estados para colapsar/expandir secciones de "Pendiente"
+  const [showPendientesEspeciales, setShowPendientesEspeciales] =
+    useState(true);
+  const [showPendientesOtros, setShowPendientesOtros] = useState(true);
+
   // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
 
@@ -104,7 +109,7 @@ const KanbanView = ({
     if (filterDateOption === "specific" && specificDate) {
       console.log(
         "🔄 KANBAN: Solicitando depósitos para fecha específica:",
-        specificDate
+        specificDate,
       );
       onFetchDepositsByDate(specificDate);
     } else if (filterDateOption === "today") {
@@ -113,7 +118,7 @@ const KanbanView = ({
       onFetchDepositsByDate(today);
     } else if (filterDateOption === "all") {
       console.log(
-        "🔄 KANBAN: Opción 'Cualquier fecha' seleccionada - cargando TODOS los depósitos"
+        "🔄 KANBAN: Opción 'Cualquier fecha' seleccionada - cargando TODOS los depósitos",
       );
       if (onFetchAllDeposits) {
         onFetchAllDeposits();
@@ -125,7 +130,7 @@ const KanbanView = ({
         "⚠️ KANBAN: No se cumple ninguna condición para cargar depósitos. filterDateOption:",
         filterDateOption,
         "specificDate:",
-        specificDate
+        specificDate,
       );
     }
   }, [
@@ -140,7 +145,7 @@ const KanbanView = ({
     if (onSelectedDateChange && specificDate) {
       console.log(
         "📅 KANBAN: Notificando cambio de fecha a App:",
-        specificDate
+        specificDate,
       );
       onSelectedDateChange(specificDate);
     }
@@ -153,7 +158,7 @@ const KanbanView = ({
       modalOpenTimeRef.current = Date.now();
       console.log(
         "📂 KANBAN: Modal abierto, guardando en localStorage. ID:",
-        selectedDeposit.id
+        selectedDeposit.id,
       );
 
       // Guardar ID del depósito abierto para restaurar después del reload
@@ -172,20 +177,20 @@ const KanbanView = ({
 
     console.log(
       "🔍 KANBAN: Verificando restauración inicial. deposits:",
-      deposits?.length
+      deposits?.length,
     );
 
     if (deposits && deposits.length > 0) {
       const wasRestored = restoreOpenDeposit(
         deposits,
         setSelectedDeposit,
-        selectedDeposit
+        selectedDeposit,
       );
       hasRestoredRef.current = true;
 
       if (wasRestored) {
         console.log(
-          "✅ KANBAN: Modal restaurado exitosamente en carga inicial"
+          "✅ KANBAN: Modal restaurado exitosamente en carga inicial",
         );
       } else {
         console.log("ℹ️ KANBAN: No hay modal para restaurar en carga inicial");
@@ -203,7 +208,7 @@ const KanbanView = ({
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         console.log(
-          "👁️ KANBAN: Pestaña visible, verificando si hay modal para restaurar"
+          "👁️ KANBAN: Pestaña visible, verificando si hay modal para restaurar",
         );
         restoreOpenDeposit(deposits, setSelectedDeposit, selectedDeposit);
       }
@@ -226,7 +231,7 @@ const KanbanView = ({
             estado: selectedDeposit.estado,
             es_antiguo: selectedDeposit.es_antiguo,
           }
-        : "null"
+        : "null",
     );
   }, [selectedDeposit]);
 
@@ -251,7 +256,7 @@ const KanbanView = ({
               es_antiguo_prev: selectedDeposit.es_antiguo,
               es_antiguo_new: updatedDeposit.es_antiguo,
               estado: updatedDeposit.estado,
-            }
+            },
           );
           setSelectedDeposit(updatedDeposit);
         }
@@ -264,7 +269,7 @@ const KanbanView = ({
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         console.log(
-          "🟢 KANBAN: Página visible - Los clicks deberían funcionar"
+          "🟢 KANBAN: Página visible - Los clicks deberían funcionar",
         );
       } else {
         console.log("🔴 KANBAN: Página oculta - Inactividad detectada");
@@ -296,7 +301,7 @@ const KanbanView = ({
     if (!deposits || !Array.isArray(deposits)) {
       console.log(
         "⚠️ KANBAN: No hay deposits o no es array:",
-        deposits?.length
+        deposits?.length,
       );
       return [];
     }
@@ -315,7 +320,7 @@ const KanbanView = ({
     }));
     console.log(
       "📅 KANBAN: Fechas disponibles (primeros 5):",
-      fechasDisponibles
+      fechasDisponibles,
     );
     const filtered = deposits.filter((deposit) => {
       const lowerCaseSearchTerm = debouncedSearchTerm.toLowerCase();
@@ -328,7 +333,7 @@ const KanbanView = ({
           year: "numeric",
           hour: "2-digit",
           minute: "2-digit",
-        }
+        },
       );
 
       const matchesSearch =
@@ -369,7 +374,7 @@ const KanbanView = ({
       "✅ KANBAN: Resultado filtrado:",
       filtered.length,
       "de",
-      deposits.length
+      deposits.length,
     );
     return filtered;
   }, [deposits, debouncedSearchTerm]);
@@ -411,6 +416,33 @@ const KanbanView = ({
     };
   }, [groupedDeposits]);
 
+  // Separar depósitos pendientes por número de teléfono 981199322
+  const pendientesSeparated = useMemo(() => {
+    const pendientes = groupedDeposits["pendiente"] || [];
+    return {
+      especiales: pendientes.filter((d) => {
+        // Verificar si el trabajador tiene el número específico
+        const telefono = d.trabajador?.telefono_origen;
+        if (!telefono) return false;
+
+        // Normalizar el teléfono (quitar +51 si lo tiene)
+        const telefonoNormalizado = telefono.startsWith("51")
+          ? telefono.slice(2)
+          : telefono;
+        return telefonoNormalizado === "981199322";
+      }),
+      otros: pendientes.filter((d) => {
+        const telefono = d.trabajador?.telefono_origen;
+        if (!telefono) return true; // Si no hay teléfono, va a "otros"
+
+        const telefonoNormalizado = telefono.startsWith("51")
+          ? telefono.slice(2)
+          : telefono;
+        return telefonoNormalizado !== "981199322";
+      }),
+    };
+  }, [groupedDeposits]);
+
   const handleCardClick = useCallback(
     async (deposit) => {
       console.log("👆 KANBAN: Click en card detectado", {
@@ -428,7 +460,7 @@ const KanbanView = ({
         const endTime = Date.now();
 
         console.log(
-          `⏱️ KANBAN: onTakeDeposit completado en ${endTime - startTime}ms`
+          `⏱️ KANBAN: onTakeDeposit completado en ${endTime - startTime}ms`,
         );
         console.log("📦 KANBAN: Resultado de onTakeDeposit:", {
           success: !!updatedDeposit,
@@ -444,22 +476,22 @@ const KanbanView = ({
           setSelectedDeposit(updatedDeposit);
         } else {
           console.error(
-            "❌ KANBAN: onTakeDeposit devolvió null/undefined - NO SE ABRIRÁ EL MODAL"
+            "❌ KANBAN: onTakeDeposit devolvió null/undefined - NO SE ABRIRÁ EL MODAL",
           );
           alert(
-            "No se pudo tomar el depósito para validación. Revisa la consola para más detalles."
+            "No se pudo tomar el depósito para validación. Revisa la consola para más detalles.",
           );
         }
       } else {
         console.log(
-          "📂 KANBAN: No es pendiente o no hay usuario, abriendo directamente"
+          "📂 KANBAN: No es pendiente o no hay usuario, abriendo directamente",
         );
         setSelectedDeposit(deposit);
       }
 
       console.log("🎬 KANBAN: Fin de handleCardClick");
     },
-    [currentUser, onTakeDeposit]
+    [currentUser, onTakeDeposit],
   );
 
   const handleCloseModal = useCallback(() => {
@@ -479,7 +511,7 @@ const KanbanView = ({
     }
 
     console.log(
-      "🚪 KANBAN: Cerrando modal - el depósito mantiene su estado actual"
+      "🚪 KANBAN: Cerrando modal - el depósito mantiene su estado actual",
     );
 
     // Limpiar localStorage ya que el usuario cerró explícitamente el modal
@@ -552,7 +584,7 @@ const KanbanView = ({
                     console.log("📅 INPUT: Fecha anterior era:", specificDate);
                     console.log(
                       "📅 INPUT: onFetchDepositsByDate disponible:",
-                      !!onFetchDepositsByDate
+                      !!onFetchDepositsByDate,
                     );
                     setSpecificDate(newDate);
                   }}
@@ -673,6 +705,83 @@ const KanbanView = ({
                         />
                       )}
                   </>
+                ) : column.id === "pendiente" ? (
+                  <>
+                    {/* Sección: Especiales (981199322) */}
+                    {pendientesSeparated.especiales.length > 0 && (
+                      <div className="mb-4">
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() =>
+                            setShowPendientesEspeciales(
+                              !showPendientesEspeciales,
+                            )
+                          }
+                        >
+                          <div className="flex-1 h-px bg-purple-300 dark:bg-purple-700"></div>
+                          <span className="text-xs font-bold text-purple-700 dark:text-purple-400 uppercase tracking-wider px-2 py-1 bg-purple-100 dark:bg-purple-900/30 rounded-full border border-purple-300 dark:border-purple-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showPendientesEspeciales ? "" : "-rotate-90"
+                              }`}
+                            />
+                            📞 981199322 (
+                            {pendientesSeparated.especiales.length})
+                          </span>
+                          <div className="flex-1 h-px bg-purple-300 dark:bg-purple-700"></div>
+                        </div>
+                        {showPendientesEspeciales && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={pendientesSeparated.especiales}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Sección: Otros */}
+                    {pendientesSeparated.otros.length > 0 && (
+                      <div>
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() =>
+                            setShowPendientesOtros(!showPendientesOtros)
+                          }
+                        >
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                          <span className="text-xs font-bold text-orange-700 dark:text-orange-400 uppercase tracking-wider px-2 py-1 bg-orange-100 dark:bg-orange-900/30 rounded-full border border-orange-300 dark:border-orange-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showPendientesOtros ? "" : "-rotate-90"
+                              }`}
+                            />
+                            ✓ Otros Contactos (
+                            {pendientesSeparated.otros.length})
+                          </span>
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                        </div>
+                        {showPendientesOtros && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={pendientesSeparated.otros}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Si no hay depósitos pendientes */}
+                    {pendientesSeparated.especiales.length === 0 &&
+                      pendientesSeparated.otros.length === 0 && (
+                        <ColumnContent
+                          deposits={[]}
+                          onCardClick={handleCardClick}
+                        />
+                      )}
+                  </>
                 ) : (
                   <ColumnContent
                     deposits={groupedDeposits[column.id]}
@@ -769,6 +878,83 @@ const KanbanView = ({
                     {/* Si no hay depósitos en validación */}
                     {validacionSeparated.antiguos.length === 0 &&
                       validacionSeparated.normales.length === 0 && (
+                        <ColumnContent
+                          deposits={[]}
+                          onCardClick={handleCardClick}
+                        />
+                      )}
+                  </>
+                ) : column.id === "pendiente" ? (
+                  <>
+                    {/* Sección: Especiales (981199322) */}
+                    {pendientesSeparated.especiales.length > 0 && (
+                      <div className="mb-4">
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() =>
+                            setShowPendientesEspeciales(
+                              !showPendientesEspeciales,
+                            )
+                          }
+                        >
+                          <div className="flex-1 h-px bg-purple-300 dark:bg-purple-700"></div>
+                          <span className="text-xs font-bold text-purple-700 dark:text-purple-400 uppercase tracking-wider px-2 py-1 bg-purple-100 dark:bg-purple-900/30 rounded-full border border-purple-300 dark:border-purple-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showPendientesEspeciales ? "" : "-rotate-90"
+                              }`}
+                            />
+                            📞 981199322 (
+                            {pendientesSeparated.especiales.length})
+                          </span>
+                          <div className="flex-1 h-px bg-purple-300 dark:bg-purple-700"></div>
+                        </div>
+                        {showPendientesEspeciales && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={pendientesSeparated.especiales}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Sección: Otros */}
+                    {pendientesSeparated.otros.length > 0 && (
+                      <div>
+                        <div
+                          className="flex items-center gap-2 mb-2 px-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() =>
+                            setShowPendientesOtros(!showPendientesOtros)
+                          }
+                        >
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                          <span className="text-xs font-bold text-orange-700 dark:text-orange-400 uppercase tracking-wider px-2 py-1 bg-orange-100 dark:bg-orange-900/30 rounded-full border border-orange-300 dark:border-orange-700 flex items-center gap-1">
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${
+                                showPendientesOtros ? "" : "-rotate-90"
+                              }`}
+                            />
+                            ✓ Otros Contactos (
+                            {pendientesSeparated.otros.length})
+                          </span>
+                          <div className="flex-1 h-px bg-orange-300 dark:bg-orange-700"></div>
+                        </div>
+                        {showPendientesOtros && (
+                          <div className="space-y-3">
+                            <ColumnContent
+                              deposits={pendientesSeparated.otros}
+                              onCardClick={handleCardClick}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Si no hay depósitos pendientes */}
+                    {pendientesSeparated.especiales.length === 0 &&
+                      pendientesSeparated.otros.length === 0 && (
                         <ColumnContent
                           deposits={[]}
                           onCardClick={handleCardClick}
