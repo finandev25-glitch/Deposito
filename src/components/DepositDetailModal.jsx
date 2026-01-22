@@ -147,6 +147,22 @@ const DepositDetailModal = ({
   const [isSending, setIsSending] = useState(false);
   const [yCloudConfigs, setYCloudConfigs] = useState([]);
 
+  // Estado de loading global para botones principales
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Estados para edición de datos del solicitante
+  const [editingSolicitante, setEditingSolicitante] = useState(false);
+  const [searchTrabajador, setSearchTrabajador] = useState("");
+  const [trabajadoresEncontrados, setTrabajadoresEncontrados] = useState([]);
+  const [buscandoTrabajador, setBuscandoTrabajador] = useState(false);
+  const [solicitanteData, setSolicitanteData] = useState({
+    trabajador_id: null,
+    trabajador_nombre: "",
+    sucursal_id: null,
+    sucursal_nombre: "",
+    telefono_origen: "",
+  });
+
   // Hook de WhatsApp
   const {
     loading: whatsappLoading,
@@ -180,6 +196,146 @@ const DepositDetailModal = ({
     }
     window.open(`https://wa.me/${formattedPhone}`, "_blank");
   };
+
+  // Función para buscar trabajadores
+  const buscarTrabajadores = async (searchTerm) => {
+    if (!isSupabaseConnected || searchTerm.length < 2) {
+      setTrabajadoresEncontrados([]);
+      return;
+    }
+
+    setBuscandoTrabajador(true);
+    try {
+      const { data, error } = await supabase
+        .from("sucursal_personal")
+        .select(
+          `
+          id,
+          nombre,
+          telefono_origen,
+          empresa,
+          es_responsable,
+          estado,
+          sucursal:sucursal_id (
+            id,
+            nombre,
+            telefono
+          )
+        `,
+        )
+        .eq("estado", "activo")
+        .or(
+          `nombre.ilike.%${searchTerm}%,telefono_origen.ilike.%${searchTerm}%`,
+        )
+        .order("nombre")
+        .limit(10);
+
+      if (error) {
+        console.error("Error buscando trabajadores:", error);
+        return;
+      }
+
+      setTrabajadoresEncontrados(data || []);
+    } catch (error) {
+      console.error("Error en búsqueda:", error);
+    } finally {
+      setBuscandoTrabajador(false);
+    }
+  };
+
+  // Efecto para buscar trabajadores cuando cambia el texto de búsqueda
+  useEffect(() => {
+    if (editingSolicitante && searchTrabajador) {
+      const timeoutId = setTimeout(() => {
+        buscarTrabajadores(searchTrabajador);
+      }, 300);
+      return () => clearTimeout(timeoutId);
+    } else {
+      setTrabajadoresEncontrados([]);
+    }
+  }, [searchTrabajador, editingSolicitante]);
+
+  // Función para seleccionar trabajador
+  const seleccionarTrabajador = (trabajador) => {
+    setSolicitanteData({
+      trabajador_id: trabajador.id,
+      trabajador_nombre: trabajador.nombre,
+      sucursal_id: trabajador.sucursal?.id || null,
+      sucursal_nombre: trabajador.sucursal?.nombre || "",
+      telefono_origen: trabajador.telefono_origen || "",
+    });
+    setSearchTrabajador(trabajador.nombre);
+    setTrabajadoresEncontrados([]);
+  };
+
+  // Función para guardar cambios del solicitante
+  const guardarCambiosSolicitante = async () => {
+    if (!isSupabaseConnected || !solicitanteData.trabajador_id) {
+      alert("Debe seleccionar un trabajador válido");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase
+        .from("depositos")
+        .update({
+          trabajador_sucursal_id: solicitanteData.trabajador_id,
+          sucursal_id: solicitanteData.sucursal_id,
+        })
+        .eq("id", deposit.id);
+
+      if (error) {
+        console.error("Error actualizando solicitante:", error);
+        alert(`Error al actualizar: ${error.message}`);
+        return;
+      }
+
+      // Actualizar el depósito en el estado local
+      const trabajadorActualizado = {
+        id: solicitanteData.trabajador_id,
+        nombre: solicitanteData.trabajador_nombre,
+        telefono_origen: solicitanteData.telefono_origen,
+      };
+
+      const sucursalActualizada = solicitanteData.sucursal_id
+        ? {
+            id: solicitanteData.sucursal_id,
+            nombre: solicitanteData.sucursal_nombre,
+          }
+        : null;
+
+      onUpdateDeposit({
+        ...deposit,
+        trabajador: trabajadorActualizado,
+        sucursal: sucursalActualizada,
+        trabajador_sucursal_id: solicitanteData.trabajador_id,
+        sucursal_id: solicitanteData.sucursal_id,
+      });
+
+      setEditingSolicitante(false);
+      alert("✅ Datos del solicitante actualizados correctamente");
+    } catch (error) {
+      console.error("Error guardando cambios:", error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Función para cancelar edición del solicitante
+  const cancelarEdicionSolicitante = () => {
+    setSolicitanteData({
+      trabajador_id: deposit.trabajador?.id || null,
+      trabajador_nombre: deposit.trabajador?.nombre || "",
+      sucursal_id: deposit.sucursal?.id || null,
+      sucursal_nombre: deposit.sucursal?.nombre || "",
+      telefono_origen: deposit.trabajador?.telefono_origen || "",
+    });
+    setSearchTrabajador(deposit.trabajador?.nombre || "");
+    setEditingSolicitante(false);
+    setTrabajadoresEncontrados([]);
+  };
   const isSupabaseConnected = supabase && currentUser;
   const isFieldsOnlyEdit = editMode === "fields-only";
 
@@ -203,6 +359,15 @@ const DepositDetailModal = ({
         ruc_cliente: deposit.ruc_cliente || "",
         observaciones: deposit.observaciones || "",
         referencia_cliente: deposit.referencia_cliente || "",
+      });
+
+      // Inicializar datos del solicitante
+      setSolicitanteData({
+        trabajador_id: deposit.trabajador?.id || null,
+        trabajador_nombre: deposit.trabajador?.nombre || "",
+        sucursal_id: deposit.sucursal?.id || null,
+        sucursal_nombre: deposit.sucursal?.nombre || "",
+        telefono_origen: deposit.trabajador?.telefono_origen || "",
       });
       setCheckResult({ checked: false, isDuplicate: false, message: "" });
       setIsChecking(false);
@@ -731,6 +896,9 @@ const DepositDetailModal = ({
   };
 
   const handleToggleEsAntiguo = async () => {
+    if (isProcessing) return; // Evitar múltiples clics
+
+    setIsProcessing(true);
     const newValue = !deposit.es_antiguo;
     console.log("🏷️ Cambiando marca de antiguo:", {
       depositId: deposit.id,
@@ -854,10 +1022,15 @@ Gracias por su comprensión.`;
       console.error("Stack trace:", error.stack);
       onUpdateDeposit(deposit); // Revertir al estado original
       alert(`Error inesperado: ${error.message}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleConfirmRejection = async (reason) => {
+    if (isProcessing) return; // Evitar múltiples clics
+
+    setIsProcessing(true);
     console.log(
       "❌ Rechazando depósito - NO se requiere validación de campos",
       {
@@ -951,6 +1124,7 @@ ${reason}`;
     });
 
     setIsRejectionModalOpen(false);
+    setIsProcessing(false);
     onClose();
   };
 
@@ -1271,6 +1445,7 @@ _Mensaje automático del sistema de control de depósitos_`;
 
     // Enviar confirmación
     setIsSending(true);
+    setIsProcessing(true);
 
     try {
       const empresa = empresas?.find((e) => e.id === editableData.empresa_id);
@@ -1318,8 +1493,10 @@ _Mensaje automático del sistema de control de depósitos_`;
         const formatPhoneNumber = (phone) => {
           let cleaned = phone.replace(/[\s\-\(\)]/g, "");
           if (cleaned.startsWith("+")) return cleaned;
-          if (cleaned.startsWith("51") && cleaned.length >= 11) return "+" + cleaned;
-          if (cleaned.length === 9 && cleaned.startsWith("9")) return "+51" + cleaned;
+          if (cleaned.startsWith("51") && cleaned.length >= 11)
+            return "+" + cleaned;
+          if (cleaned.length === 9 && cleaned.startsWith("9"))
+            return "+51" + cleaned;
           return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
         };
 
@@ -1343,7 +1520,9 @@ _Mensaje automático del sistema de control de depósitos_`;
           alert("✅ Depósito confirmado y mensaje enviado exitosamente");
         } else {
           console.warn("⚠️ Error enviando mensaje:", result.message);
-          alert(`✅ Depósito confirmado. ⚠️ No se pudo enviar mensaje: ${result.message || result.error}`);
+          alert(
+            `✅ Depósito confirmado. ⚠️ No se pudo enviar mensaje: ${result.message || result.error}`,
+          );
         }
       } else {
         // No se puede enviar mensaje, solo confirmar
@@ -1352,8 +1531,13 @@ _Mensaje automático del sistema de control de depósitos_`;
         if (!telefonoDisponible) razones.push("sin teléfono");
         if (!empresa || !banco) razones.push("faltan datos de empresa/banco");
 
-        console.log("✅ Depósito confirmado sin envío de mensaje:", razones.join(", "));
-        alert(`✅ Depósito confirmado exitosamente.${razones.length > 0 ? `\n(No se envió mensaje: ${razones.join(", ")})` : ""}`);
+        console.log(
+          "✅ Depósito confirmado sin envío de mensaje:",
+          razones.join(", "),
+        );
+        alert(
+          `✅ Depósito confirmado exitosamente.${razones.length > 0 ? `\n(No se envió mensaje: ${razones.join(", ")})` : ""}`,
+        );
       }
     } catch (error) {
       console.error("❌ Error enviando confirmación:", error);
@@ -1367,6 +1551,141 @@ _Mensaje automático del sistema de control de depósitos_`;
       alert(`❌ Error enviando mensaje: ${error.message}`);
     } finally {
       setIsSending(false);
+      setIsProcessing(false);
+    }
+
+    onClose();
+  };
+
+  const handleConfirmDepositSinMensaje = async () => {
+    console.log(
+      "🔄 handleConfirmDepositSinMensaje ejecutado - Confirmación SIN envío de mensajes",
+      {
+        editableData: {
+          empresa_id: editableData.empresa_id,
+          banco_id: editableData.banco_id,
+          anexo: editableData.anexo,
+          moneda: editableData.moneda,
+        },
+      },
+    );
+
+    // Validar campos requeridos
+    const camposRequeridos = [];
+
+    if (!editableData.empresa_id) {
+      camposRequeridos.push("Empresa");
+    }
+
+    if (!editableData.banco_id) {
+      camposRequeridos.push("Banco");
+    }
+
+    if (!editableData.anexo) {
+      camposRequeridos.push("Anexo");
+    }
+
+    if (!editableData.moneda) {
+      camposRequeridos.push("Moneda");
+    }
+
+    // Si faltan campos, mostrar error y no continuar
+    if (camposRequeridos.length > 0) {
+      const mensaje = `Por favor, seleccione los siguientes campos requeridos: ${camposRequeridos.join(
+        ", ",
+      )}`;
+      alert(mensaje);
+      console.error("❌ Validación fallida:", {
+        camposRequeridos,
+        editableData,
+      });
+      return;
+    }
+
+    console.log("✅ Validación exitosa, confirmando depósito SIN mensaje...");
+
+    const payload = buildUpdatePayload({
+      estado: "validado",
+      motivo_rechazo: null,
+      validado_por: currentUser.id,
+      fecha_validacion: new Date().toISOString(),
+    });
+
+    // Incluir datos del solicitante si han sido modificados
+    if (
+      solicitanteData.trabajador_id &&
+      (solicitanteData.trabajador_id !== deposit.trabajador?.id ||
+        solicitanteData.sucursal_id !== deposit.sucursal?.id)
+    ) {
+      payload.trabajador_sucursal_id = solicitanteData.trabajador_id;
+      payload.sucursal_id = solicitanteData.sucursal_id;
+      console.log("✅ Incluyendo datos del solicitante modificados:", {
+        trabajador_sucursal_id: payload.trabajador_sucursal_id,
+        sucursal_id: payload.sucursal_id,
+      });
+    }
+
+    console.log("📤 Enviando actualización del depósito (sin mensaje):", {
+      depositId: deposit.id,
+      payload: payload,
+    });
+
+    // Actualizar depósito
+    setIsSending(true);
+    setIsProcessing(true);
+
+    try {
+      const { error } = await supabase
+        .from("depositos")
+        .update(payload)
+        .eq("id", deposit.id);
+
+      if (error) {
+        throw error;
+      }
+
+      console.log("✅ Depósito confirmado exitosamente SIN envío de mensajes");
+
+      // Actualizar el depósito preservando las relaciones
+      const updatedDeposit = {
+        ...deposit, // Preservar todo el depósito original (incluyendo relaciones)
+        ...payload, // Sobrescribir solo los campos actualizados
+      };
+
+      // Si se actualizaron datos del solicitante, incluir los objetos relacionados
+      if (payload.trabajador_sucursal_id && payload.sucursal_id) {
+        const trabajadorActualizado = {
+          id: solicitanteData.trabajador_id,
+          nombre: solicitanteData.trabajador_nombre,
+          telefono_origen: solicitanteData.telefono_origen,
+        };
+
+        const sucursalActualizada = {
+          id: solicitanteData.sucursal_id,
+          nombre: solicitanteData.sucursal_nombre,
+        };
+
+        updatedDeposit.trabajador = trabajadorActualizado;
+        updatedDeposit.sucursal = sucursalActualizada;
+
+        console.log(
+          "✅ Actualizando también datos del solicitante en estado local:",
+          {
+            trabajador: trabajadorActualizado,
+            sucursal: sucursalActualizada,
+          },
+        );
+      }
+
+      onUpdateDeposit(updatedDeposit);
+
+      alert("✅ Depósito confirmado exitosamente (sin mensaje)");
+    } catch (error) {
+      console.error("❌ Error confirmando depósito:", error);
+      alert(`❌ Error al confirmar depósito: ${error.message}`);
+    } finally {
+      setIsSending(false);
+      setIsProcessing(false);
     }
 
     onClose();
@@ -1920,73 +2239,240 @@ _Mensaje automático del sistema de control de depósitos_`;
                 </div>
 
                 <div
-                  className={`w-full bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 border-l-4 ${getCardBorderColor(
-                    "solicitante",
-                  )} rounded-lg p-2 shadow-md dark:shadow-black/30 hover:shadow-lg hover:shadow-indigo-500/50 dark:hover:shadow-indigo-400/40 transition-shadow duration-300`}
+                  className={`w-full bg-white dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 border-l-4 ${
+                    editingSolicitante
+                      ? "border-l-blue-500 dark:border-l-blue-400"
+                      : getCardBorderColor("solicitante")
+                  } rounded-lg p-2 shadow-md dark:shadow-black/30 hover:shadow-lg hover:shadow-indigo-500/50 dark:hover:shadow-indigo-400/40 transition-shadow duration-300`}
                 >
-                  <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                    Datos del Solicitante
-                  </h4>
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="truncate">
-                        <p className="text-gray-500 dark:text-gray-400 text-sm">
-                          Vendedor
-                        </p>
-                        <p
-                          className="font-semibold text-gray-900 dark:text-gray-100 text-base"
-                          title={deposit.trabajador?.nombre}
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                      Datos del Solicitante
+                    </h4>
+                    {!editingSolicitante && isSupabaseConnected && (
+                      <button
+                        onClick={() => {
+                          setEditingSolicitante(true);
+                          setSearchTrabajador(deposit.trabajador?.nombre || "");
+                        }}
+                        disabled={isProcessing}
+                        className="flex items-center space-x-1 px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors disabled:opacity-50"
+                        title="Editar datos del solicitante"
+                      >
+                        <svg
+                          className="w-3 h-3"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
                         >
-                          {deposit.trabajador?.nombre || "-"}
-                        </p>
-                      </div>
-                      <div className="truncate">
-                        <p className="text-gray-500 dark:text-gray-400 text-sm">
-                          Sucursal
-                        </p>
-                        <p
-                          className="font-semibold text-gray-900 dark:text-gray-100 text-base"
-                          title={deposit.sucursal?.nombre}
-                        >
-                          {deposit.sucursal?.nombre || "-"}
-                        </p>
-                      </div>
-                      <div className="truncate">
-                        <p className="text-gray-500 dark:text-gray-400 text-sm">
-                          Fecha de Envío
-                        </p>
-                        <p className="font-semibold text-gray-900 dark:text-gray-100 text-base">
-                          {formatDateTime(deposit.fecha_registro)}
-                        </p>
-                      </div>
-                      <div className="truncate">
-                        <p className="text-gray-500 dark:text-gray-400 text-sm">
-                          Teléfono
-                        </p>
-                        {deposit.trabajador?.telefono_origen ? (
-                          <a
-                            href={`https://wa.me/${deposit.trabajador.telefono_origen.replace(
-                              /[^0-9]/g,
-                              "",
-                            )}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 font-semibold text-green-600 dark:text-green-400 text-sm hover:text-green-700 dark:hover:text-green-300 transition-colors group"
-                            title={`Llamar por WhatsApp: ${deposit.trabajador.telefono_origen}`}
-                          >
-                            <Phone className="w-3.5 h-3.5 flex-shrink-0 group-hover:scale-110 transition-transform" />
-                            <span className="truncate">
-                              {deposit.trabajador.telefono_origen}
-                            </span>
-                          </a>
-                        ) : (
-                          <p className="font-semibold text-gray-400 dark:text-gray-500 text-base">
-                            -
-                          </p>
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                          />
+                        </svg>
+                        <span>Editar</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {editingSolicitante ? (
+                    <div className="space-y-3">
+                      {/* Campo de búsqueda de trabajador */}
+                      <div className="relative">
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Buscar Vendedor (nombre o teléfono)
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={searchTrabajador}
+                            onChange={(e) =>
+                              setSearchTrabajador(e.target.value)
+                            }
+                            placeholder="Escribe para buscar..."
+                            className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                            autoComplete="off"
+                          />
+                          {buscandoTrabajador && (
+                            <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                              <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Lista de trabajadores encontrados */}
+                        {trabajadoresEncontrados.length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                            {trabajadoresEncontrados.map((trabajador) => (
+                              <button
+                                key={trabajador.id}
+                                onClick={() =>
+                                  seleccionarTrabajador(trabajador)
+                                }
+                                className="w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-600 last:border-b-0 text-sm"
+                              >
+                                <div className="font-medium text-gray-900 dark:text-gray-100">
+                                  {trabajador.nombre}
+                                </div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                  📱 {trabajador.telefono_origen} • 🏢{" "}
+                                  {trabajador.sucursal?.nombre ||
+                                    "Sin sucursal"}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
                         )}
                       </div>
+
+                      {/* Datos seleccionados */}
+                      {solicitanteData.trabajador_id && (
+                        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-3">
+                          <div className="grid grid-cols-1 gap-2 text-sm">
+                            <div>
+                              <span className="font-medium text-blue-800 dark:text-blue-200">
+                                Vendedor:
+                              </span>
+                              <span className="ml-2 text-gray-900 dark:text-gray-100">
+                                {solicitanteData.trabajador_nombre}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="font-medium text-blue-800 dark:text-blue-200">
+                                Sucursal:
+                              </span>
+                              <span className="ml-2 text-gray-900 dark:text-gray-100">
+                                {solicitanteData.sucursal_nombre ||
+                                  "Sin sucursal"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="font-medium text-blue-800 dark:text-blue-200">
+                                Teléfono:
+                              </span>
+                              <span className="ml-2 text-gray-900 dark:text-gray-100">
+                                {solicitanteData.telefono_origen}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Botones de acción */}
+                      <div className="flex items-center justify-end space-x-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                        <button
+                          onClick={cancelarEdicionSolicitante}
+                          disabled={isProcessing}
+                          className="px-3 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={guardarCambiosSolicitante}
+                          disabled={
+                            isProcessing || !solicitanteData.trabajador_id
+                          }
+                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                        >
+                          {isProcessing ? (
+                            <>
+                              <div className="animate-spin h-3 w-3 border border-white border-t-transparent rounded-full"></div>
+                              <span>Guardando...</span>
+                            </>
+                          ) : (
+                            <span>Guardar</span>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="truncate">
+                          <p className="text-gray-500 dark:text-gray-400 text-sm">
+                            Vendedor
+                          </p>
+                          <p
+                            className="font-semibold text-gray-900 dark:text-gray-100 text-base"
+                            title={deposit.trabajador?.nombre}
+                          >
+                            {deposit.trabajador?.nombre || "-"}
+                          </p>
+                        </div>
+                        <div className="truncate">
+                          <p className="text-gray-500 dark:text-gray-400 text-sm">
+                            Sucursal
+                          </p>
+                          <p
+                            className="font-semibold text-gray-900 dark:text-gray-100 text-base"
+                            title={deposit.sucursal?.nombre}
+                          >
+                            {deposit.sucursal?.nombre || "-"}
+                          </p>
+                        </div>
+                        <div className="truncate">
+                          <p className="text-gray-500 dark:text-gray-400 text-sm">
+                            Fecha de Envío
+                          </p>
+                          <p className="font-semibold text-gray-900 dark:text-gray-100 text-base">
+                            {formatDateTime(deposit.fecha_registro)}
+                          </p>
+                        </div>
+                        <div className="truncate">
+                          <p className="text-gray-500 dark:text-gray-400 text-sm">
+                            Teléfono
+                          </p>
+                          {deposit.trabajador?.telefono_origen ? (
+                            <a
+                              href={`https://wa.me/${deposit.trabajador.telefono_origen.replace(
+                                /[^0-9]/g,
+                                "",
+                              )}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 font-semibold text-green-600 dark:text-green-400 text-sm hover:text-green-700 dark:hover:text-green-300 transition-colors group"
+                              title={`Llamar por WhatsApp: ${deposit.trabajador.telefono_origen}`}
+                            >
+                              <Phone className="w-3.5 h-3.5 flex-shrink-0 group-hover:scale-110 transition-transform" />
+                              <span className="truncate">
+                                {deposit.trabajador.telefono_origen}
+                              </span>
+                            </a>
+                          ) : (
+                            <p className="font-semibold text-gray-400 dark:text-gray-500 text-base">
+                              -
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Botón Confirmar Sin Mensaje en el card */}
+                      {(deposit.estado === "pendiente" ||
+                        deposit.estado === "en_validacion") && (
+                        <div className="pt-3 border-t border-gray-200 dark:border-gray-600">
+                          <button
+                            onClick={handleConfirmDepositSinMensaje}
+                            disabled={!canConfirm || isSending || isProcessing}
+                            className="w-full px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2 transition-colors"
+                            title="Confirmar depósito sin enviar mensaje de WhatsApp"
+                          >
+                            {isSending ? (
+                              <Loader2 className="animate-spin" size={14} />
+                            ) : (
+                              <CheckCircle size={14} />
+                            )}
+                            <span>
+                              {isSending
+                                ? "Confirmando..."
+                                : "Confirmar Sin Mensaje"}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Mensaje de campos requeridos debajo del card Datos del Solicitante */}
@@ -2133,7 +2619,8 @@ _Mensaje automático del sistema de control de depósitos_`;
                   deposit.estado === "en_validacion") && (
                   <button
                     onClick={handleToggleEsAntiguo}
-                    className={`px-3 py-1.5 rounded-md hover:opacity-90 font-medium flex items-center justify-center space-x-2 text-sm transition-all ${
+                    disabled={isProcessing}
+                    className={`px-3 py-1.5 rounded-md font-medium flex items-center justify-center space-x-2 text-sm transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                       deposit.es_antiguo
                         ? "bg-orange-600 text-white hover:bg-orange-700"
                         : "bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-400 dark:hover:bg-gray-500"
@@ -2155,16 +2642,19 @@ _Mensaje automático del sistema de control de depósitos_`;
                   onClick={() => {
                     setIsRejectionModalOpen(true);
                   }}
-                  className="px-3 py-1.5 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium flex items-center justify-center space-x-2 text-sm"
+                  disabled={isProcessing}
+                  className="px-3 py-1.5 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium flex items-center justify-center space-x-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Ban size={12} />
                   <span>Rechazar</span>
                 </button>
+
+                {/* Botón Confirmar original (con mensaje) */}
                 <button
                   onClick={handleConfirmDepositWithMessage}
-                  disabled={!canConfirm || isSending}
+                  disabled={!canConfirm || isSending || isProcessing}
                   className="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2"
-                  title="Confirmar depósito"
+                  title="Confirmar depósito y enviar mensaje de WhatsApp"
                 >
                   {isSending ? (
                     <Loader2 className="animate-spin" size={12} />
@@ -2178,6 +2668,30 @@ _Mensaje automático del sistema de control de depósitos_`;
           </div>
         </motion.div>
       </div>
+
+      {/* Overlay de loading durante procesamiento */}
+      <AnimatePresence>
+        {isProcessing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center"
+            style={{ pointerEvents: "all" }}
+          >
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl flex flex-col items-center space-y-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              <p className="text-gray-700 dark:text-gray-300 font-medium">
+                Procesando...
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+                Por favor espere mientras se completa la operación
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isRejectionModalOpen && (
           <RejectionModal
