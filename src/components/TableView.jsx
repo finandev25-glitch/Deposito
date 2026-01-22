@@ -149,7 +149,7 @@ const TableView = ({
   }, [deposits, searchTerm, filterStatus, specificDate]); // Removimos filterPeriod ya que ahora se maneja en App.jsx
 
   const handleEditClick = (deposit) => {
-    setModalEditMode("fields-only");
+    setModalEditMode("full");
     setSelectedDeposit(deposit);
   };
 

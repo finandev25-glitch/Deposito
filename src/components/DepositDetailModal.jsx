@@ -9,8 +9,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../supabaseClient.js";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import useWhatsApp from "../hooks/useWhatsApp.js";
-import { useWhatsAppNotifications } from "../hooks/useWhatsAppNotifications.js";
-import whatsappService from "../services/whatsappService.js";
 import chatwootService from "../services/chatwootService.js";
 import yCloudService from "../services/yCloudService.js";
 import {
@@ -104,11 +102,6 @@ const DepositDetailModal = ({
   editMode = "full",
 }) => {
   const { currentUser } = useContext(AuthContext);
-  const {
-    notifyDepositApproved,
-    notifyDepositRejected,
-    isSending: isWhatsAppSending,
-  } = useWhatsAppNotifications();
 
   const [editableData, setEditableData] = useState({
     empresa_id: "",
@@ -883,19 +876,6 @@ Gracias por su comprensión.`;
       fecha_validacion: new Date().toISOString(),
     };
 
-    // Enviar notificación WhatsApp de rechazo (no bloqueante)
-    try {
-      const empresa = empresas?.find((e) => e.id === editableData.empresa_id);
-      const banco = bancos?.find((b) => b.id === editableData.banco_id);
-
-      // Ejecutar en segundo plano
-      notifyDepositRejected(deposit, empresa, banco, reason).catch((error) => {
-        console.warn("Error enviando notificación de rechazo WhatsApp:", error);
-      });
-    } catch (error) {
-      console.warn("Error preparando notificación de rechazo WhatsApp:", error);
-    }
-
     // Enviar mensaje de rechazo si hay configuración
     if (yCloudConfigId) {
       try {
@@ -1253,19 +1233,6 @@ _Mensaje automático del sistema de control de depósitos_`;
       camposRequeridos.push("Moneda");
     }
 
-    // Validar datos de configuración
-    if (!yCloudConfigId) {
-      camposRequeridos.push("Configuración de mensaje");
-    }
-
-    // Validar que tenga teléfono (del trabajador o de la sucursal)
-    const telefonoDisponible =
-      deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
-
-    if (!telefonoDisponible) {
-      camposRequeridos.push("Teléfono de trabajador de sucursal");
-    }
-
     // Si faltan campos, mostrar error y no continuar
     if (camposRequeridos.length > 0) {
       const mensaje = `Por favor, complete los siguientes campos requeridos: ${camposRequeridos.join(
@@ -1275,14 +1242,20 @@ _Mensaje automático del sistema de control de depósitos_`;
       console.error("❌ Validación fallida:", {
         camposRequeridos,
         editableData,
-        yCloudConfigId,
-        sucursalTelefono: deposit.sucursal?.telefono,
-        telefonoDisponible,
       });
       return;
     }
 
-    console.log("✅ Validación exitosa, confirmando depósito...");
+    // Verificar si se puede enviar mensaje (opcional)
+    const telefonoDisponible =
+      deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
+    const puedeEnviarMensaje = yCloudConfigId && telefonoDisponible;
+
+    console.log("✅ Validación exitosa, confirmando depósito...", {
+      puedeEnviarMensaje,
+      tieneConfig: !!yCloudConfigId,
+      tieneTelefono: !!telefonoDisponible,
+    });
 
     const payload = buildUpdatePayload({
       estado: "validado",
@@ -1308,7 +1281,14 @@ _Mensaje automático del sistema de control de depósitos_`;
         banco: banco ? { id: banco.id, nombre: banco.nombre } : null,
       });
 
-      if (empresa && banco) {
+      // Siempre actualizar el depósito primero
+      onUpdateDeposit({
+        ...deposit,
+        ...payload,
+      });
+
+      // Intentar enviar mensaje solo si es posible
+      if (puedeEnviarMensaje && empresa && banco) {
         // Formatear fecha correctamente sin problemas de zona horaria
         const formatearFechaDeposito = (fechaString) => {
           const [year, month, day] = fechaString.split("T")[0].split("-");
@@ -1334,119 +1314,46 @@ El depósito ha sido validado y confirmado exitosamente.
 
 _Mensaje automático del sistema de control de depósitos_`;
 
-        console.log("📱 Enviando mensaje:", {
+        // Formatear el número de teléfono para WhatsApp
+        const formatPhoneNumber = (phone) => {
+          let cleaned = phone.replace(/[\s\-\(\)]/g, "");
+          if (cleaned.startsWith("+")) return cleaned;
+          if (cleaned.startsWith("51") && cleaned.length >= 11) return "+" + cleaned;
+          if (cleaned.length === 9 && cleaned.startsWith("9")) return "+51" + cleaned;
+          return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
+        };
+
+        const telefonoFormateado = formatPhoneNumber(telefonoDisponible);
+
+        console.log("📱 Enviando mensaje de confirmación:", {
+          telefono: telefonoFormateado,
+          replyTo: deposit.chatwoot_message_id || "ninguno",
+        });
+
+        // Enviar mensaje (como respuesta al mensaje original si existe wamid)
+        const result = await yCloudService.sendTextMessage({
           configId: yCloudConfigId,
-          empresa: empresa.nombre,
-          banco: banco.nombre,
-          mensaje: mensajeConfirmacion.substring(0, 100) + "...",
+          to: telefonoFormateado,
+          text: mensajeConfirmacion,
+          replyToMessageId: deposit.chatwoot_message_id || undefined,
         });
 
-        // Obtener el número de teléfono del trabajador
-        const sucursalTelefono =
-          deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
-
-        console.log("📞 Datos de teléfono:", {
-          trabajador: deposit.trabajador,
-          telefono_origen: deposit.trabajador?.telefono_origen,
-          sucursal_telefono: deposit.sucursal?.telefono,
-          telefono_final: sucursalTelefono,
-        });
-
-        if (sucursalTelefono) {
-          // Formatear el número de teléfono para WhatsApp
-          const formatPhoneNumber = (phone) => {
-            // Remover espacios, guiones y paréntesis
-            let cleaned = phone.replace(/[\s\-\(\)]/g, "");
-
-            // Si ya tiene +, mantenerlo
-            if (cleaned.startsWith("+")) {
-              return cleaned;
-            }
-
-            // Si empieza con 51 (código de Perú), agregar +
-            if (cleaned.startsWith("51") && cleaned.length >= 11) {
-              return "+" + cleaned;
-            }
-
-            // Si es número peruano sin código de país (9 dígitos), agregar +51
-            if (cleaned.length === 9 && cleaned.startsWith("9")) {
-              return "+51" + cleaned;
-            }
-
-            // Para otros casos, agregar + al inicio si no lo tiene
-            return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
-          };
-
-          const telefonoFormateado = formatPhoneNumber(sucursalTelefono);
-
-          console.log("📞 Teléfono formateado:", telefonoFormateado);
-          console.log("🚀 Iniciando envío...");
-
-          // Enviar mensaje (como respuesta al mensaje original si existe wamid)
-          const result = await yCloudService.sendTextMessage({
-            configId: yCloudConfigId,
-            to: telefonoFormateado,
-            text: mensajeConfirmacion,
-            replyToMessageId: deposit.chatwoot_message_id || undefined,
-          });
-
-          console.log("📨 Respuesta:", result);
-
-          if (result.success) {
-            console.log("✅ Confirmación enviada:", {
-              messageId: result.data?.id,
-              status: result.data?.status,
-              asReply: !!deposit.chatwoot_message_id,
-            });
-
-            // Actualizar el depósito preservando relaciones
-            onUpdateDeposit({
-              ...deposit,
-              ...payload,
-            });
-
-            alert("✅ Depósito confirmado y mensaje enviado exitosamente");
-          } else {
-            console.warn(
-              "⚠️ No se pudo enviar mensaje:",
-              result.error || result.message,
-            );
-
-            // Actualizar el depósito preservando relaciones
-            onUpdateDeposit({
-              ...deposit,
-              ...payload,
-            });
-
-            alert(
-              `⚠️ Depósito confirmado, pero hubo un error al enviar mensaje: ${result.message || result.error}`,
-            );
-          }
+        if (result.success) {
+          console.log("✅ Mensaje enviado:", result.data?.id);
+          alert("✅ Depósito confirmado y mensaje enviado exitosamente");
         } else {
-          console.warn(
-            "⚠️ No hay teléfono disponible (ni en trabajador ni en sucursal)",
-          );
-
-          // Actualizar el depósito preservando relaciones
-          onUpdateDeposit({
-            ...deposit,
-            ...payload,
-          });
-
-          alert(
-            "✅ Depósito confirmado. No se envió mensaje (trabajador sin teléfono).",
-          );
+          console.warn("⚠️ Error enviando mensaje:", result.message);
+          alert(`✅ Depósito confirmado. ⚠️ No se pudo enviar mensaje: ${result.message || result.error}`);
         }
       } else {
-        console.error("❌ No se encontraron datos de empresa o banco");
+        // No se puede enviar mensaje, solo confirmar
+        const razones = [];
+        if (!yCloudConfigId) razones.push("sin configuración de mensajes");
+        if (!telefonoDisponible) razones.push("sin teléfono");
+        if (!empresa || !banco) razones.push("faltan datos de empresa/banco");
 
-        // Actualizar el depósito preservando relaciones
-        onUpdateDeposit({
-          ...deposit,
-          ...payload,
-        });
-
-        alert("⚠️ Depósito confirmado, pero faltan datos de empresa o banco");
+        console.log("✅ Depósito confirmado sin envío de mensaje:", razones.join(", "));
+        alert(`✅ Depósito confirmado exitosamente.${razones.length > 0 ? `\n(No se envió mensaje: ${razones.join(", ")})` : ""}`);
       }
     } catch (error) {
       console.error("❌ Error enviando confirmación:", error);
@@ -2255,14 +2162,14 @@ _Mensaje automático del sistema de control de depósitos_`;
                 </button>
                 <button
                   onClick={handleConfirmDepositWithMessage}
-                  disabled={!canConfirmYCloud || isSending}
+                  disabled={!canConfirm || isSending}
                   className="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2"
                   title="Confirmar depósito"
                 >
                   {isSending ? (
                     <Loader2 className="animate-spin" size={12} />
                   ) : (
-                    <Phone size={12} />
+                    <CheckCircle size={12} />
                   )}
                   <span>{isSending ? "Enviando..." : "Confirmar"}</span>
                 </button>
