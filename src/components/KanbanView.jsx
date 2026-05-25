@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Calendar,
   MessageCircle,
+  Bell,
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { toLocalISOString } from "../utils/dateFormatters";
@@ -93,6 +94,7 @@ const KanbanView = ({
   cuentas,
   onOpenVoucherWindow,
   connectionStatus,
+  realtimeActivity,
 }) => {
   const { currentUser } = useContext(AuthContext);
   const [searchTerm, setSearchTerm] = useState("");
@@ -123,6 +125,7 @@ const KanbanView = ({
 
   // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
+  const [visibleRealtimeActivity, setVisibleRealtimeActivity] = useState(null);
 
   // Fetch deposits cuando cambia la fecha específica (incluyendo montaje inicial)
   useEffect(() => {
@@ -324,6 +327,17 @@ const KanbanView = ({
 
     return () => clearTimeout(timer);
   }, [searchTerm]);
+
+  useEffect(() => {
+    if (!realtimeActivity) return;
+
+    setVisibleRealtimeActivity(realtimeActivity);
+    const timer = setTimeout(() => {
+      setVisibleRealtimeActivity(null);
+    }, 3500);
+
+    return () => clearTimeout(timer);
+  }, [realtimeActivity]);
 
   const columns = [
     { id: "pendiente", title: "Pendiente", color: "bg-orange-400" },
@@ -619,6 +633,31 @@ const KanbanView = ({
             <span className="hidden sm:inline">Contactos</span>
           </button>
         </div>
+
+        <AnimatePresence>
+          {visibleRealtimeActivity && (
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.98 }}
+              className="mb-4 inline-flex items-center gap-2 self-start rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 shadow-sm dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200"
+            >
+              <Bell size={14} />
+              <span className="font-medium">
+                {visibleRealtimeActivity.type === "delete"
+                  ? `Realtime: 1 depósito eliminado`
+                  : `Realtime: ${visibleRealtimeActivity.count} depósito${visibleRealtimeActivity.count === 1 ? "" : "s"} actualizado${visibleRealtimeActivity.count === 1 ? "" : "s"}`}
+              </span>
+              <span className="text-xs text-blue-600 dark:text-blue-300">
+                {new Date(visibleRealtimeActivity.at).toLocaleTimeString("es-PE", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Filtros y búsqueda en una segunda línea */}
         <div className="flex flex-wrap items-center gap-4 mb-6 flex-shrink-0">

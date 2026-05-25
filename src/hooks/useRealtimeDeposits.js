@@ -5,7 +5,13 @@ import { logger } from "../utils/logger";
 const BATCH_DELAY_MS = 100;
 const RETRY_DELAY_MS = 3000;
 
-export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, queryString) => {
+export const useRealtimeDeposits = (
+  isSupabaseConnected,
+  currentUser,
+  onUpdate,
+  queryString,
+  onReconnectRefresh
+) => {
   const [realtimeStatus, setRealtimeStatus] = useState(null);
   const [realtimeErrors, setRealtimeErrors] = useState(0);
 
@@ -14,6 +20,7 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
   const isProcessingRef = useRef(false);
   const onUpdateRef = useRef(onUpdate);
   const queryStringRef = useRef(queryString);
+  const onReconnectRefreshRef = useRef(onReconnectRefresh);
   const statusRef = useRef("CLOSED");
   const channelRef = useRef(null);
   const reconnectingRef = useRef(false);
@@ -22,7 +29,8 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
   useEffect(() => {
     onUpdateRef.current = onUpdate;
     queryStringRef.current = queryString;
-  }, [onUpdate, queryString]);
+    onReconnectRefreshRef.current = onReconnectRefresh;
+  }, [onUpdate, queryString, onReconnectRefresh]);
 
   useEffect(() => {
     if (!isSupabaseConnected || !currentUser || !supabase) {
@@ -148,6 +156,11 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
         } catch (_) {}
 
         createChannel();
+
+        if (onReconnectRefreshRef.current) {
+          console.log("🔄 REALTIME: Rehidratando vista tras reconexión...");
+          await onReconnectRefreshRef.current();
+        }
       } finally {
         reconnectingRef.current = false;
       }
@@ -217,12 +230,29 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
 
       if (currentStatus !== "SUBSCRIBED") {
         await hardReconnect();
+        return;
+      }
+
+      if (onReconnectRefreshRef.current) {
+        console.log("👁️ REALTIME: Rehidratando vista al volver visible...");
+        await onReconnectRefreshRef.current();
       }
     };
 
     const onOnline = async () => {
       await hardReconnect();
+      if (onReconnectRefreshRef.current) {
+        console.log("🌐 REALTIME: Rehidratando vista tras volver la red...");
+        await onReconnectRefreshRef.current();
+      }
     };
+
+    const keepAliveInterval = setInterval(async () => {
+      const isAlive = await keepConnectionAlive();
+      if (!isAlive && document.visibilityState === "visible") {
+        await hardReconnect();
+      }
+    }, 2 * 60 * 1000);
 
     createChannel();
     setRealtimeStatus("CONNECTING");
@@ -233,6 +263,7 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("online", onOnline);
+      clearInterval(keepAliveInterval);
       clearTimeout(processingTimeoutRef.current);
       clearTimeout(retryTimeoutRef.current);
       cleanupChannel();

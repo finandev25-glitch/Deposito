@@ -43,6 +43,7 @@ export function useDepositDashboard() {
   const [currentSelectedDate, setCurrentSelectedDate] = useState(null);
   const [appDataLoading, setAppDataLoading] = useState(true);
   const [appDataError, setAppDataError] = useState(null);
+  const [realtimeActivity, setRealtimeActivity] = useState(null);
   const [voucherPanelState] = useState({
     isOpen: false,
     voucherUrl: "",
@@ -168,6 +169,12 @@ export function useDepositDashboard() {
   const handleRealtimeUpdate = useCallback(
     (updatedDepositsOrNull, deletedId) => {
       if (Array.isArray(updatedDepositsOrNull) && updatedDepositsOrNull.length > 0) {
+        setRealtimeActivity({
+          type: "update",
+          count: updatedDepositsOrNull.length,
+          depositId: updatedDepositsOrNull[0]?.id || null,
+          at: Date.now(),
+        });
         console.log("🔄 REALTIME: Actualizando estado deposits...", {
           count: updatedDepositsOrNull.length,
           firstId: updatedDepositsOrNull[0]?.id,
@@ -178,6 +185,12 @@ export function useDepositDashboard() {
       }
 
       if (deletedId) {
+        setRealtimeActivity({
+          type: "delete",
+          count: 1,
+          depositId: deletedId,
+          at: Date.now(),
+        });
         console.log("🗑️ REALTIME: Eliminando depósito del estado:", deletedId);
         setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
         console.log("✅ REALTIME: Estado actualizado");
@@ -558,7 +571,8 @@ export function useDepositDashboard() {
     isSupabaseConnected,
     currentUser,
     handleRealtimeUpdate,
-    DEPOSIT_FULL_QUERY
+    DEPOSIT_FULL_QUERY,
+    refreshDeposits
   );
 
   useEffect(() => {
@@ -737,6 +751,7 @@ export function useDepositDashboard() {
     personal,
     appDataLoading,
     appDataError,
+    realtimeActivity,
     realtimeStatus,
     realtimeErrors,
     voucherPanelState,

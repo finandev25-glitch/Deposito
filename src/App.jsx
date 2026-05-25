@@ -36,6 +36,7 @@ function App() {
     appDataError,
     realtimeStatus,
     realtimeErrors,
+    realtimeActivity,
     isSupabaseConnected,
     voucherPanelState,
     currentSelectedDate,
@@ -206,6 +207,7 @@ function App() {
                     realtimeStatus,
                     realtimeErrors,
                   }}
+                  realtimeActivity={realtimeActivity}
                 />
               }
             />
