@@ -1,14 +1,16 @@
+import { fork } from "child_process";
 import { createClient } from "@supabase/supabase-js";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { Readable } from "stream";
 import { finished } from "stream/promises";
 import JSZip from "jszip";
 
 let supabaseClient = null;
-let channel = null;
+let realtimeWorker = null;
+let realtimeWorkerRestartTimeout = null;
 let realtimeStatus = "DISCONNECTED";
-let reconnectTimeout = null;
 const clients = new Set();
 const voucherExportJobs = new Map();
 let envLoaded = false;
@@ -3486,37 +3488,77 @@ function summarizeRealtimeError(error) {
 }
 
 function setRealtimeStatus(status, error = null) {
-  if (realtimeStatus === status && status !== "SUBSCRIBED") {
+  if (realtimeStatus === status && !["READY", "STARTING", "RESTARTING"].includes(status)) {
     return;
   }
 
   realtimeStatus = status;
-  if (status === "SUBSCRIBED") {
-    console.log("Backend realtime conectado a depositos");
+  if (status === "READY") {
+    console.log("Backend realtime worker listo para depositos");
+  } else if (status === "STARTING") {
+    console.log("Backend realtime worker iniciando");
+  } else if (status === "RESTARTING") {
+    console.warn("Backend realtime worker reiniciando");
   } else if (status === "CHANNEL_ERROR") {
     console.error("Backend realtime error:", summarizeRealtimeError(error));
   } else if (status === "TIMED_OUT") {
     console.warn("Backend realtime timeout:", summarizeRealtimeError(error));
   } else if (status === "CLOSED") {
     console.warn("Backend realtime canal cerrado");
+  } else if (status === "ERROR") {
+    console.error("Backend realtime worker error:", summarizeRealtimeError(error));
+  } else if (status === "DISABLED") {
+    console.warn("Backend realtime desactivado:", summarizeRealtimeError(error));
+  } else if (status === "DISCONNECTED") {
+    console.warn("Backend realtime worker desconectado");
   }
 }
 
-function scheduleRealtimeReconnect() {
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
+function getRealtimeWorkerPath() {
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "realtimeWorker.js");
+}
+
+function scheduleRealtimeWorkerRestart() {
+  if (realtimeWorkerRestartTimeout) {
+    return;
   }
 
-  reconnectTimeout = setTimeout(() => {
-    reconnectTimeout = null;
-    channel = null;
+  setRealtimeStatus("RESTARTING");
+  realtimeWorkerRestartTimeout = setTimeout(() => {
+    realtimeWorkerRestartTimeout = null;
     startDepositRealtimeHub();
   }, 5000);
 }
 
+function handleRealtimeWorkerMessage(message) {
+  if (!message || typeof message !== "object") {
+    return;
+  }
+
+  if (message.type === "status") {
+    setRealtimeStatus(message.status, message.error || null);
+    return;
+  }
+
+  if (message.type === "deposit-change") {
+    broadcast({
+      type: "deposit-change",
+      eventType: message.eventType,
+      new: message.new,
+      old: message.old,
+      timestamp: message.timestamp || new Date().toISOString(),
+    });
+  }
+}
+
 export function startDepositRealtimeHub() {
-  const client = getSupabaseClient();
-  if (!client) {
+  if (realtimeWorker?.connected) {
+    return true;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
     console.warn(
       "Backend realtime desactivado: faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY"
     );
@@ -3524,31 +3566,40 @@ export function startDepositRealtimeHub() {
     return false;
   }
 
-  if (channel) return true;
+  realtimeStatus = "STARTING";
+  const realtimeWorkerPath = getRealtimeWorkerPath();
+  const worker = fork(realtimeWorkerPath, [], {
+    env: {
+      ...process.env,
+      REALTIME_WORKER: "1",
+      SUPABASE_URL: supabaseUrl,
+      SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+    },
+    stdio: ["inherit", "inherit", "inherit", "ipc"],
+  });
 
-  channel = client
-    .channel("backend-depositos-realtime")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "depositos" },
-      (payload) => {
-        broadcast({
-          type: "deposit-change",
-          eventType: payload.eventType,
-          new: payload.new,
-          old: payload.old,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    )
-    .subscribe((status, error) => {
-      setRealtimeStatus(status, error);
-
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-        channel = null;
-        scheduleRealtimeReconnect();
-      }
-    });
+  realtimeWorker = worker;
+  realtimeWorker.on("message", handleRealtimeWorkerMessage);
+  realtimeWorker.on("error", (error) => {
+    console.error("Backend realtime worker error:", summarizeRealtimeError(error));
+    setRealtimeStatus("ERROR", error);
+  });
+  realtimeWorker.on("exit", (code, signal) => {
+    if (realtimeWorker === worker) {
+      realtimeWorker = null;
+    }
+    console.warn("Backend realtime worker exited", { code, signal });
+    setRealtimeStatus("DISCONNECTED", { code, signal });
+    scheduleRealtimeWorkerRestart();
+  });
+  realtimeWorker.on("disconnect", () => {
+    if (realtimeWorker === worker) {
+      realtimeWorker = null;
+    }
+    console.warn("Backend realtime worker disconnected");
+    setRealtimeStatus("DISCONNECTED");
+    scheduleRealtimeWorkerRestart();
+  });
 
   return true;
 }
@@ -3607,7 +3658,7 @@ export function registerDepositSseRoute(app) {
     res.json({
       ok: true,
       clients: clients.size,
-      realtime: !!channel,
+      realtime: !!realtimeWorker,
       realtimeStatus,
     });
   });
