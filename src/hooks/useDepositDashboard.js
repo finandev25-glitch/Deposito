@@ -1,7 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext.jsx";
-import { supabase } from "../supabaseClient";
+import { useRealtimeDeposits } from "./useRealtimeDeposits.js";
 import {
   initialBancos,
   initialEmpresas,
@@ -10,6 +9,7 @@ import {
   generateMockSucursales,
   generateMockDeposits,
 } from "../utils/mockData";
+import { toLocalISOString } from "../utils/dateFormatters";
 
 const API_BASE = "/api";
 
@@ -40,7 +40,6 @@ async function apiJson(path, options = {}) {
 
 export function useDepositDashboard() {
   const { currentUser, users } = useContext(AuthContext);
-  const location = useLocation();
 
   const [bancos, setBancos] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -59,8 +58,7 @@ export function useDepositDashboard() {
 
   const currentUserRef = useRef(currentUser);
   const currentSelectedDateRef = useRef(currentSelectedDate);
-  const realtimeChannelRef = useRef(null);
-  const requestSeqRef = useRef(0);
+  const lastQueryRef = useRef({ type: null, value: null });
   const isSupabaseConnected = !!currentUser;
 
   useEffect(() => {
@@ -70,6 +68,98 @@ export function useDepositDashboard() {
   useEffect(() => {
     currentSelectedDateRef.current = currentSelectedDate;
   }, [currentSelectedDate]);
+
+  const matchesCurrentQuery = useCallback((deposit) => {
+    const lastQuery = lastQueryRef.current;
+
+    if (!deposit || !lastQuery.type) return false;
+    if (lastQuery.type === "all") return true;
+
+    if (lastQuery.type === "date") {
+      return deposit.fecha_solo_date === lastQuery.value;
+    }
+
+    if (lastQuery.type === "period") {
+      const period = lastQuery.value;
+
+      if (period === "today") {
+        return deposit.fecha_solo_date === toLocalISOString(new Date());
+      }
+
+      if (period === "week") {
+        const now = new Date();
+        const daysFromMonday = now.getDay() === 0 ? 6 : now.getDay() - 1;
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - daysFromMonday);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+        return (
+          deposit.fecha_solo_date >= toLocalISOString(startOfWeek) &&
+          deposit.fecha_solo_date <= toLocalISOString(endOfWeek)
+        );
+      }
+
+      if (period === "month") {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        return (
+          deposit.fecha_solo_date >= toLocalISOString(start) &&
+          deposit.fecha_solo_date <= toLocalISOString(end)
+        );
+      }
+
+      if (period.startsWith("month:")) {
+        const [year, month] = period.split(":")[1].split("-").map(Number);
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 0);
+
+        return (
+          deposit.fecha_solo_date >= toLocalISOString(start) &&
+          deposit.fecha_solo_date <= toLocalISOString(end)
+        );
+      }
+    }
+
+    return false;
+  }, []);
+
+  const mergeDepositsIntoView = useCallback(
+    (prevDeposits, incomingDeposits) => {
+      const incomingMap = new Map(incomingDeposits.map((deposit) => [deposit.id, deposit]));
+
+      const next = prevDeposits
+        .map((deposit) => incomingMap.get(deposit.id) || deposit)
+        .filter((deposit) => {
+          if (!incomingMap.has(deposit.id)) return true;
+          return matchesCurrentQuery(deposit);
+        });
+
+      const existingIds = new Set(next.map((deposit) => deposit.id));
+      const newItems = incomingDeposits
+        .filter((deposit) => matchesCurrentQuery(deposit) && !existingIds.has(deposit.id))
+        .sort((a, b) => new Date(b.fecha_registro) - new Date(a.fecha_registro));
+
+      return [...newItems, ...next];
+    },
+    [matchesCurrentQuery]
+  );
+
+  const handleRealtimeUpdate = useCallback(
+    (updatedDepositsOrNull, deletedId) => {
+      if (Array.isArray(updatedDepositsOrNull) && updatedDepositsOrNull.length > 0) {
+        setDeposits((prev) => mergeDepositsIntoView(prev, updatedDepositsOrNull));
+        return;
+      }
+
+      if (deletedId) {
+        setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
+      }
+    },
+    [mergeDepositsIntoView]
+  );
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -135,6 +225,7 @@ export function useDepositDashboard() {
     const data = await apiJson(`/depositos?date=${encodeURIComponent(date)}&limit=500`);
     setDeposits(data.data || []);
     setCurrentSelectedDate(date);
+    lastQueryRef.current = { type: "date", value: date };
     return data.data || [];
   }, []);
 
@@ -142,6 +233,8 @@ export function useDepositDashboard() {
     const query = period ? `?period=${encodeURIComponent(period)}&limit=500` : "?limit=500";
     const data = await apiJson(`/depositos${query}`);
     setDeposits(data.data || []);
+    setCurrentSelectedDate(null);
+    lastQueryRef.current = { type: "period", value: period };
     return data.data || [];
   }, []);
 
@@ -149,15 +242,23 @@ export function useDepositDashboard() {
     const data = await apiJson("/depositos?limit=500");
     setDeposits(data.data || []);
     setCurrentSelectedDate(null);
+    lastQueryRef.current = { type: "all", value: null };
     return data.data || [];
   }, []);
 
   const refreshDeposits = useCallback(async () => {
-    if (currentSelectedDateRef.current) {
-      return fetchDepositsByDate(currentSelectedDateRef.current);
+    const lastQuery = lastQueryRef.current;
+
+    if (lastQuery.type === "date" && lastQuery.value) {
+      return fetchDepositsByDate(lastQuery.value);
     }
+
+    if (lastQuery.type === "period" && lastQuery.value) {
+      return fetchDepositsByPeriod(lastQuery.value);
+    }
+
     return fetchAllDeposits();
-  }, [fetchAllDeposits, fetchDepositsByDate]);
+  }, [fetchAllDeposits, fetchDepositsByDate, fetchDepositsByPeriod]);
 
   const handleSelectedDateChange = useCallback((fecha) => {
     setCurrentSelectedDate(fecha);
@@ -421,6 +522,35 @@ export function useDepositDashboard() {
     }
   }, []);
 
+  const { realtimeStatus, realtimeErrors } = useRealtimeDeposits(
+    isSupabaseConnected,
+    currentUser,
+    handleRealtimeUpdate,
+    null
+  );
+
+  useEffect(() => {
+    if (!currentUser || !isSupabaseConnected) {
+      return;
+    }
+
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshDeposits();
+    };
+
+    const refreshTimer = setInterval(() => {
+      refreshDeposits();
+    }, 30000);
+
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      clearInterval(refreshTimer);
+    };
+  }, [currentUser, isSupabaseConnected, refreshDeposits]);
+
   const depositsWithFullData = useMemo(() => {
     if (!deposits) return [];
     if (isSupabaseConnected) return deposits;
@@ -464,84 +594,13 @@ export function useDepositDashboard() {
   ]);
 
   useEffect(() => {
-    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban" || !supabase) {
-      if (realtimeChannelRef.current) {
-        supabase?.removeChannel?.(realtimeChannelRef.current);
-        realtimeChannelRef.current = null;
-      }
-      return;
+    if (!currentUser) return;
+
+    // Keep the local selection in sync when user navigates or refreshes.
+    if (!currentSelectedDateRef.current && deposits.length > 0 && lastQueryRef.current.type === null) {
+      lastQueryRef.current = { type: "all", value: null };
     }
-
-    if (realtimeChannelRef.current) {
-      supabase.removeChannel(realtimeChannelRef.current);
-      realtimeChannelRef.current = null;
-    }
-
-    const channelName = `kanban-depositos-${currentUser.id || "anon"}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "depositos" },
-        async (payload) => {
-          console.log("🔴 KANBAN realtime: postgres_changes recibido", payload.eventType);
-          try {
-            if (currentSelectedDateRef.current) {
-              await refreshDeposits();
-            } else {
-              await fetchAllDeposits();
-            }
-          } catch (error) {
-            console.error("Error refrescando Kanban tras realtime de Supabase:", error);
-          }
-        }
-      )
-      .subscribe((status, error) => {
-        if (status === "SUBSCRIBED") {
-          console.log("✅ KANBAN realtime: Supabase conectado a depositos");
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          console.error("Error en el canal Supabase realtime:", status, error || "");
-        } else {
-          console.log("🟡 KANBAN realtime status:", status);
-        }
-      });
-
-    realtimeChannelRef.current = channel;
-
-    return () => {
-      if (realtimeChannelRef.current === channel) {
-        realtimeChannelRef.current = null;
-      }
-      supabase.removeChannel(channel);
-    };
-  }, [currentUser, isSupabaseConnected, location.pathname, fetchAllDeposits, refreshDeposits]);
-
-  useEffect(() => {
-    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban") {
-      return;
-    }
-    const handleVisibilityRefresh = () => {
-      if (document.visibilityState !== "visible") return;
-
-      if (currentSelectedDateRef.current) {
-        refreshDeposits();
-      } else {
-        fetchAllDeposits();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityRefresh);
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
-    };
-  }, [
-    currentUser,
-    isSupabaseConnected,
-    location.pathname,
-    fetchAllDeposits,
-    refreshDeposits,
-  ]);
+  }, [currentUser, deposits.length]);
 
   return {
     bancos,
@@ -552,6 +611,8 @@ export function useDepositDashboard() {
     personal,
     appDataLoading,
     appDataError,
+    realtimeStatus,
+    realtimeErrors,
     voucherPanelState,
     currentSelectedDate,
     depositsWithFullData,
@@ -590,6 +651,3 @@ export function useDepositDashboard() {
 }
 
 export default useDepositDashboard;
-
-
-
