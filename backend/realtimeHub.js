@@ -7,6 +7,8 @@ import JSZip from "jszip";
 
 let supabaseClient = null;
 let channel = null;
+let realtimeStatus = "DISCONNECTED";
+let reconnectTimeout = null;
 const clients = new Set();
 const voucherExportJobs = new Map();
 let envLoaded = false;
@@ -3473,12 +3475,38 @@ function broadcastDepositChange(eventType, row, oldRow = null, meta = {}) {
   broadcast(event);
 }
 
+function setRealtimeStatus(status, error = null) {
+  realtimeStatus = status;
+  if (status === "SUBSCRIBED") {
+    console.log("Backend realtime conectado a depositos");
+  } else if (status === "CHANNEL_ERROR") {
+    console.error("Backend realtime error:", error);
+  } else if (status === "TIMED_OUT") {
+    console.warn("Backend realtime timeout:", error || "");
+  } else if (status === "CLOSED") {
+    console.warn("Backend realtime canal cerrado");
+  }
+}
+
+function scheduleRealtimeReconnect() {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+  }
+
+  reconnectTimeout = setTimeout(() => {
+    reconnectTimeout = null;
+    channel = null;
+    startDepositRealtimeHub();
+  }, 5000);
+}
+
 export function startDepositRealtimeHub() {
   const client = getSupabaseClient();
   if (!client) {
     console.warn(
       "Backend realtime desactivado: faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY"
     );
+    realtimeStatus = "DISABLED";
     return false;
   }
 
@@ -3500,10 +3528,17 @@ export function startDepositRealtimeHub() {
       }
     )
     .subscribe((status, error) => {
-      if (status === "SUBSCRIBED") {
-        console.log("Backend realtime conectado a depositos");
-      } else if (status === "CHANNEL_ERROR") {
-        console.error("Backend realtime error:", error);
+      setRealtimeStatus(status, error);
+
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        try {
+          channel?.unsubscribe?.();
+        } catch (unsubscribeError) {
+          console.warn("Backend realtime: error al desuscribir canal:", unsubscribeError);
+        } finally {
+          channel = null;
+          scheduleRealtimeReconnect();
+        }
       }
     });
 
@@ -3523,6 +3558,11 @@ export function registerDepositSseRoute(app) {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders?.();
 
+    console.log("[SSE] cliente conectado", {
+      clients: clients.size + 1,
+      realtimeStatus,
+    });
+
     res.write(
       `event: connected\ndata: ${JSON.stringify({
         ok: true,
@@ -3539,6 +3579,10 @@ export function registerDepositSseRoute(app) {
     req.on("close", () => {
       clearInterval(keepAlive);
       clients.delete(res);
+      console.log("[SSE] cliente desconectado", {
+        clients: clients.size,
+        realtimeStatus,
+      });
     });
   });
 
@@ -3557,6 +3601,7 @@ export function registerDepositSseRoute(app) {
       ok: true,
       clients: clients.size,
       realtime: !!channel,
+      realtimeStatus,
     });
   });
 }

@@ -478,13 +478,22 @@ export function useDepositDashboard() {
     const source = new EventSource("/api/events/depositos");
     eventSourceRef.current = source;
 
+    source.addEventListener("connected", () => {
+      console.log("✅ KANBAN realtime: SSE conectado a /api/events/depositos");
+    });
+
     source.addEventListener("deposit-change", () => {
+      console.log("🔴 KANBAN realtime: deposit-change recibido");
       if (currentSelectedDateRef.current) {
         refreshDeposits();
       } else {
         fetchAllDeposits();
       }
     });
+
+    source.onopen = () => {
+      console.log("🟢 KANBAN realtime: EventSource abierto");
+    };
 
     source.onerror = (error) => {
       console.error("Error en el canal backend realtime:", error);
@@ -502,7 +511,6 @@ export function useDepositDashboard() {
     if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban") {
       return;
     }
-
     const handleVisibilityRefresh = () => {
       if (document.visibilityState !== "visible") return;
 
@@ -513,20 +521,9 @@ export function useDepositDashboard() {
       }
     };
 
-    const intervalId = setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-
-      if (currentSelectedDateRef.current) {
-        refreshDeposits();
-      } else {
-        fetchAllDeposits();
-      }
-    }, 30000);
-
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
-      clearInterval(intervalId);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [
