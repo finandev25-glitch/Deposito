@@ -12,10 +12,11 @@ Extensión de navegador para mostrar el voucher y los datos clave del depósito 
 
 ## Uso
 
-1. Abre el sistema en `http://localhost:5173/` o `http://localhost:3000/`.
+1. Abre el sistema en `http://localhost:5173/`, `http://localhost:3000/` o en tu URL de EasyPanel.
 2. En el modal del depósito, usa el botón `Panel Lateral`.
 3. La extensión guarda el último voucher en `chrome.storage.local`.
 4. Aunque cambies de página, el panel lateral sigue mostrando el último depósito cargado.
+5. Si cambias el dominio del sistema, actualiza `browser-extension/manifest.json` y recarga la extensión.
 
 ## Flujo
 
@@ -33,4 +34,3 @@ Extensión de navegador para mostrar el voucher y los datos clave del depósito 
 - Estado
 - Sucursal
 - Banco
-
