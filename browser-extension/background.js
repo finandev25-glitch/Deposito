@@ -248,7 +248,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       tabId
     );
 
-    sendResponse({ ok: true, state, opened: false });
+    let opened = false;
+    if (sender?.tab?.id && chrome.sidePanel?.setOptions && chrome.sidePanel?.open) {
+      try {
+        await chrome.sidePanel.setOptions({
+          tabId: sender.tab.id,
+          path: "sidepanel.html",
+          enabled: true,
+        });
+        await chrome.sidePanel.open({
+          tabId: sender.tab.id,
+          windowId: sender.tab.windowId,
+        });
+        opened = true;
+      } catch (error) {
+        console.warn("No se pudo abrir el panel lateral tras recibir el voucher:", error);
+      }
+    }
+
+    sendResponse({ ok: true, state, opened });
   })().catch((error) => {
     sendResponse({ ok: false, error: error.message });
   });
