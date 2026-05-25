@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useEffect, useState } from "react";
+import { supabase } from "../supabaseClient";
 import { apiGet, apiPost, apiPut } from "../services/backendApi.js";
 
 export const AuthContext = createContext();
@@ -32,6 +33,34 @@ function writeStoredJSON(key, value) {
 function clearStoredAuth() {
   writeStoredJSON(SESSION_KEY, null);
   writeStoredJSON(CURRENT_USER_KEY, null);
+}
+
+async function syncSupabaseSession(session) {
+  if (!supabase) {
+    return null;
+  }
+
+  try {
+    if (session?.access_token && session?.refresh_token) {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+
+      if (error) {
+        console.warn("No se pudo sincronizar la sesión de Supabase:", error);
+        return null;
+      }
+
+      return data?.session || null;
+    }
+
+    await supabase.auth.signOut();
+    return null;
+  } catch (error) {
+    console.warn("Error sincronizando sesión de Supabase:", error);
+    return null;
+  }
 }
 
 function normalizeUserFromAuth(authUser, profile = {}, fallbackEmail = "") {
@@ -118,6 +147,7 @@ export const AuthProvider = ({ children }) => {
       setUsers([]);
       setAuthSession(null);
       clearStoredAuth();
+      await syncSupabaseSession(null);
       return null;
     }
 
@@ -135,11 +165,13 @@ export const AuthProvider = ({ children }) => {
       authUser?.email || ""
     );
 
+    const syncedSession = await syncSupabaseSession(fallbackSession || null);
+
     setCurrentUser(normalizedUser);
-    setAuthSession(fallbackSession || null);
+    setAuthSession(syncedSession || fallbackSession || null);
     writeStoredJSON(CURRENT_USER_KEY, normalizedUser);
-    if (fallbackSession) {
-      writeStoredJSON(SESSION_KEY, fallbackSession);
+    if (syncedSession || fallbackSession) {
+      writeStoredJSON(SESSION_KEY, syncedSession || fallbackSession);
     }
 
     try {
@@ -162,6 +194,7 @@ export const AuthProvider = ({ children }) => {
       setCurrentUser(null);
       setUsers([]);
       setAuthSession(null);
+      await syncSupabaseSession(null);
       setLoading(false);
       return;
     }
@@ -183,6 +216,7 @@ export const AuthProvider = ({ children }) => {
       setCurrentUser(null);
       setUsers([]);
       setAuthSession(null);
+      await syncSupabaseSession(null);
     } finally {
       setLoading(false);
     }
@@ -227,6 +261,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.warn("Logout backend falló:", error);
     } finally {
+      await syncSupabaseSession(null);
       clearStoredAuth();
       setCurrentUser(null);
       setUsers([]);

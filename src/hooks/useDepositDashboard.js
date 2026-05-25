@@ -64,63 +64,6 @@ export function useDepositDashboard() {
     currentSelectedDateRef.current = currentSelectedDate;
   }, [currentSelectedDate]);
 
-  const matchesCurrentQuery = useCallback((deposit) => {
-    const lastQuery = lastQueryRef.current;
-
-    if (!deposit || !lastQuery.type) return false;
-    if (lastQuery.type === "all") return true;
-
-    if (lastQuery.type === "date") {
-      return deposit.fecha_solo_date === lastQuery.value;
-    }
-
-    if (lastQuery.type === "period") {
-      const period = lastQuery.value;
-
-      if (period === "today") {
-        return deposit.fecha_solo_date === toLocalISOString(new Date());
-      }
-
-      if (period === "week") {
-        const now = new Date();
-        const daysFromMonday = now.getDay() === 0 ? 6 : now.getDay() - 1;
-        const startOfWeek = new Date(now);
-        startOfWeek.setDate(now.getDate() - daysFromMonday);
-        const endOfWeek = new Date(startOfWeek);
-        endOfWeek.setDate(startOfWeek.getDate() + 6);
-
-        return (
-          deposit.fecha_solo_date >= toLocalISOString(startOfWeek) &&
-          deposit.fecha_solo_date <= toLocalISOString(endOfWeek)
-        );
-      }
-
-      if (period === "month") {
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-        return (
-          deposit.fecha_solo_date >= toLocalISOString(start) &&
-          deposit.fecha_solo_date <= toLocalISOString(end)
-        );
-      }
-
-      if (period.startsWith("month:")) {
-        const [year, month] = period.split(":")[1].split("-").map(Number);
-        const start = new Date(year, month - 1, 1);
-        const end = new Date(year, month, 0);
-
-        return (
-          deposit.fecha_solo_date >= toLocalISOString(start) &&
-          deposit.fecha_solo_date <= toLocalISOString(end)
-        );
-      }
-    }
-
-    return false;
-  }, []);
-
   const mergeDepositRecord = useCallback((existing = {}, incoming = {}) => {
     const merged = { ...existing, ...incoming };
 
@@ -141,66 +84,6 @@ export function useDepositDashboard() {
     return merged;
   }, []);
 
-  const mergeDepositsIntoView = useCallback(
-    (prevDeposits, incomingDeposits) => {
-      const incomingMap = new Map(incomingDeposits.map((deposit) => [deposit.id, deposit]));
-
-      const next = prevDeposits
-        .map((deposit) => {
-          const incoming = incomingMap.get(deposit.id);
-          return incoming ? mergeDepositRecord(deposit, incoming) : deposit;
-        })
-        .filter((deposit) => {
-          if (!incomingMap.has(deposit.id)) return true;
-          return matchesCurrentQuery(deposit);
-        });
-
-      const existingIds = new Set(next.map((deposit) => deposit.id));
-      const newItems = incomingDeposits
-        .map((deposit) => mergeDepositRecord({}, deposit))
-        .filter((deposit) => matchesCurrentQuery(deposit) && !existingIds.has(deposit.id))
-        .sort((a, b) => new Date(b.fecha_registro) - new Date(a.fecha_registro));
-
-      return [...newItems, ...next];
-    },
-    [matchesCurrentQuery, mergeDepositRecord]
-  );
-
-  const handleRealtimeUpdate = useCallback(
-    (updatedDepositsOrNull, deletedId) => {
-      if (Array.isArray(updatedDepositsOrNull) && updatedDepositsOrNull.length > 0) {
-        setRealtimeActivity({
-          type: "update",
-          count: updatedDepositsOrNull.length,
-          depositId: updatedDepositsOrNull[0]?.id || null,
-          at: Date.now(),
-        });
-        console.log("🔄 REALTIME: Actualizando estado deposits...", {
-          count: updatedDepositsOrNull.length,
-          firstId: updatedDepositsOrNull[0]?.id,
-        });
-        setDeposits((prev) => mergeDepositsIntoView(prev, updatedDepositsOrNull));
-        console.log("✅ REALTIME: Estado actualizado");
-        return;
-      }
-
-      if (deletedId) {
-        setRealtimeActivity({
-          type: "delete",
-          count: 1,
-          depositId: deletedId,
-          at: Date.now(),
-        });
-        console.log("🗑️ REALTIME: Eliminando depósito del estado:", deletedId);
-        setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
-        console.log("✅ REALTIME: Estado actualizado");
-      }
-    },
-    [mergeDepositsIntoView]
-  );
-
-  const applyKanbanRealtimeUpdates = useCallback(async () => {}, []);
-  const applyKanbanPayload = useCallback(() => {}, []);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -288,22 +171,87 @@ export function useDepositDashboard() {
   }, []);
 
   const refreshDeposits = useCallback(async () => {
-    const lastQuery = lastQueryRef.current;
+    try {
+      console.log("🔄 Refrescando depósitos...");
+      const lastQuery = lastQueryRef.current;
 
-    if (lastQuery.type === "date" && lastQuery.value) {
-      return fetchDepositsByDate(lastQuery.value);
+      if (lastQuery.type === "date" && lastQuery.value) {
+        console.log("📅 Refrescando depósitos para fecha específica:", lastQuery.value);
+        return await fetchDepositsByDate(lastQuery.value);
+      }
+
+      if (lastQuery.type === "period" && lastQuery.value) {
+        console.log("📅 Refrescando depósitos para período:", lastQuery.value);
+        return await fetchDepositsByPeriod(lastQuery.value);
+      }
+
+      console.log("📅 Refrescando todos los depósitos...");
+      return await fetchAllDeposits();
+    } catch (error) {
+      console.warn("⚠️ Error al refrescar depósitos:", error.message);
     }
-
-    if (lastQuery.type === "period" && lastQuery.value) {
-      return fetchDepositsByPeriod(lastQuery.value);
-    }
-
-    return fetchAllDeposits();
   }, [fetchAllDeposits, fetchDepositsByDate, fetchDepositsByPeriod]);
 
   useEffect(() => {
     refreshDepositsRef.current = refreshDeposits;
   }, [refreshDeposits]);
+
+  const handleRealtimeInsert = useCallback(() => {
+    setRealtimeActivity({
+      type: "update",
+      count: 1,
+      depositId: null,
+      at: Date.now(),
+    });
+    console.log("🔄 REALTIME: Llamando refreshDeposits para INSERT...");
+    refreshDeposits();
+  }, [refreshDeposits]);
+
+  const handleRealtimeUpdate = useCallback((fullDeposit) => {
+    if (!fullDeposit) return;
+    
+    setRealtimeActivity({
+      type: "update",
+      count: 1,
+      depositId: fullDeposit.id,
+      at: Date.now(),
+    });
+    
+    console.log("🔄 REALTIME: Actualizando estado deposits para UPDATE...", {
+      id: fullDeposit.id,
+      estado: fullDeposit.estado,
+    });
+
+    setDeposits((prev) => {
+      const exists = prev.some((d) => d.id === fullDeposit.id);
+      if (exists) {
+        const updated = prev.map((dep) => 
+          dep.id === fullDeposit.id ? mergeDepositRecord(dep, fullDeposit) : dep
+        );
+        console.log("✅ REALTIME: Registro existente actualizado");
+        return updated;
+      }
+      
+      console.log("⚠️ REALTIME: Registro modificado no existía en el estado actual. Refrescando todo...");
+      setTimeout(() => refreshDeposits(), 0);
+      return prev;
+    });
+  }, [mergeDepositRecord, refreshDeposits]);
+
+  const handleRealtimeDelete = useCallback((deletedId) => {
+    if (!deletedId) return;
+
+    setRealtimeActivity({
+      type: "delete",
+      count: 1,
+      depositId: deletedId,
+      at: Date.now(),
+    });
+
+    console.log("🗑️ REALTIME: Eliminando depósito del estado:", deletedId);
+    setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
+    console.log("✅ REALTIME: Estado actualizado");
+  }, []);
 
   const handleSelectedDateChange = useCallback((fecha) => {
     setCurrentSelectedDate(fecha);
@@ -570,126 +518,38 @@ export function useDepositDashboard() {
   const { realtimeStatus, realtimeErrors } = useRealtimeDeposits(
     isSupabaseConnected,
     currentUser,
+    handleRealtimeInsert,
     handleRealtimeUpdate,
+    handleRealtimeDelete,
     DEPOSIT_FULL_QUERY,
     refreshDeposits
   );
 
-  useEffect(() => {
-    if (false) {
-      return () => {};
-
-    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban" || !supabase) {
-      if (realtimeChannelRef.current) {
-        supabase?.removeChannel?.(realtimeChannelRef.current);
-        realtimeChannelRef.current = null;
-      }
-      if (kanbanRealtimeTimerRef.current) {
-        clearTimeout(kanbanRealtimeTimerRef.current);
-        kanbanRealtimeTimerRef.current = null;
-      }
-      kanbanRealtimeQueueRef.current = [];
-      return;
-    }
-
-    if (realtimeChannelRef.current) {
-      supabase.removeChannel(realtimeChannelRef.current);
-      realtimeChannelRef.current = null;
-    }
-
-    const channelName = `kanban-depositos-${currentUser.id || "anon"}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "depositos" },
-        (payload) => {
-          const eventType = payload?.eventType;
-          const recordId = payload?.new?.id || payload?.old?.id;
-
-          if (!recordId) return;
-
-          applyKanbanPayload(payload);
-
-          kanbanRealtimeQueueRef.current.push({
-            id: recordId,
-            eventType,
-          });
-
-          if (kanbanRealtimeTimerRef.current) {
-            clearTimeout(kanbanRealtimeTimerRef.current);
-          }
-
-          kanbanRealtimeTimerRef.current = setTimeout(() => {
-            kanbanRealtimeTimerRef.current = null;
-            applyKanbanRealtimeUpdates();
-          }, 80);
-
-          if (kanbanHydrateTimerRef.current) {
-            clearTimeout(kanbanHydrateTimerRef.current);
-          }
-
-          kanbanHydrateTimerRef.current = setTimeout(() => {
-            kanbanHydrateTimerRef.current = null;
-            if (refreshDepositsRef.current) {
-              refreshDepositsRef.current().catch((error) => {
-                console.error("Error rehidratando Kanban realtime:", error);
-              });
-            }
-          }, 1500);
-        }
-      )
-      .subscribe((status, error) => {
-        if (status === "SUBSCRIBED") {
-          console.log("✅ KANBAN realtime: Supabase conectado a depositos");
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          console.error("Error en el canal Supabase realtime:", status, error || "");
-        } else {
-          console.log("🟡 KANBAN realtime status:", status);
-        }
-      });
-
-    realtimeChannelRef.current = channel;
-
-    return () => {
-      if (realtimeChannelRef.current === channel) {
-        realtimeChannelRef.current = null;
-      }
-      if (kanbanRealtimeTimerRef.current) {
-        clearTimeout(kanbanRealtimeTimerRef.current);
-        kanbanRealtimeTimerRef.current = null;
-      }
-      if (kanbanHydrateTimerRef.current) {
-        clearTimeout(kanbanHydrateTimerRef.current);
-        kanbanHydrateTimerRef.current = null;
-      }
-      kanbanRealtimeQueueRef.current = [];
-      supabase.removeChannel(channel);
-    };
-    }
-  }, [applyKanbanPayload, applyKanbanRealtimeUpdates, currentUser, isSupabaseConnected, location.pathname]);
-
+  // Polling de respaldo adaptativo:
+  // Si Realtime está activo y suscrito, el polling se espacia a 5 minutos para ahorrar recursos.
+  // Si está desconectado o en error, se activa un fallback de 60 segundos.
   useEffect(() => {
     if (!currentUser || !isSupabaseConnected) {
       return;
     }
 
-    const handleVisibilityRefresh = () => {
-      if (document.visibilityState !== "visible") return;
-      refreshDeposits();
-    };
+    const intervalDelay = realtimeStatus === "SUBSCRIBED" ? 5 * 60 * 1000 : 60000;
+
+    console.log(
+      `⏱️ DASHBOARD: Iniciando polling de respaldo con intervalo de ${
+        intervalDelay / 1000
+      }s (Realtime: ${realtimeStatus || "DESCONECTADO"})`
+    );
 
     const refreshTimer = setInterval(() => {
+      console.log("⏱️ DASHBOARD: Ejecutando refresco periódico de respaldo...");
       refreshDeposits();
-    }, 30000);
-
-    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    }, intervalDelay);
 
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
       clearInterval(refreshTimer);
     };
-  }, [currentUser, isSupabaseConnected, refreshDeposits]);
+  }, [currentUser, isSupabaseConnected, refreshDeposits, realtimeStatus]);
 
   const depositsWithFullData = useMemo(() => {
     if (!deposits) return [];
@@ -716,22 +576,15 @@ export function useDepositDashboard() {
     }
 
     (async () => {
-      await fetchData(false);
-
-      const today = new Date().toISOString().split("T")[0];
-      if (currentSelectedDateRef.current) {
-        await refreshDeposits();
-      } else {
-        await fetchDepositsByDate(today);
+      try {
+        await fetchData(false);
+      } catch (error) {
+        console.error("❌ Error al cargar datos iniciales:", error);
+      } finally {
+        setAppDataLoading(false);
       }
     })();
-  }, [
-    currentUser,
-    isSupabaseConnected,
-    fetchData,
-    fetchDepositsByDate,
-    refreshDeposits,
-  ]);
+  }, [currentUser, isSupabaseConnected, fetchData]);
 
   useEffect(() => {
     if (!currentUser) return;

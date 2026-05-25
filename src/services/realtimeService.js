@@ -80,7 +80,7 @@ export function desconectarRealtime() {
   }
 
   try {
-    supabase?.removeChannel?.(canalActivo);
+    canalActivo.unsubscribe();
   } catch (error) {
     console.error('REALTIME SERVICE: error al cerrar canal', error);
   } finally {

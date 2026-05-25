@@ -12,7 +12,7 @@ export function useRealtimeOptional(tableName, onUpdate, isEnabled = true) {
     }
 
     if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
+      channelRef.current.unsubscribe();
       channelRef.current = null;
     }
 
@@ -43,7 +43,7 @@ export function useRealtimeOptional(tableName, onUpdate, isEnabled = true) {
 
     return () => {
       if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
+        channelRef.current.unsubscribe();
         channelRef.current = null;
       }
       setStatus('UNSUBSCRIBED');
