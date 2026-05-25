@@ -52,9 +52,42 @@ const channel = client
     }
   );
 
+let restartTimer = null;
+
+function requestRestart(status, error) {
+  sendMessage({
+    type: "status",
+    status,
+    error: summarizeRealtimeError(error),
+  });
+
+  if (restartTimer) {
+    return;
+  }
+
+  restartTimer = setTimeout(() => {
+    process.exit(1);
+  }, 1000);
+}
+
 try {
-  channel.subscribe();
-  sendMessage({ type: "status", status: "READY" });
+  channel.subscribe((status, error) => {
+    if (status === "SUBSCRIBED") {
+      sendMessage({ type: "status", status: "READY" });
+      return;
+    }
+
+    if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+      requestRestart(status, error);
+      return;
+    }
+
+    sendMessage({
+      type: "status",
+      status,
+      error: summarizeRealtimeError(error),
+    });
+  });
 } catch (error) {
   sendMessage({
     type: "status",
@@ -83,6 +116,9 @@ process.on("unhandledRejection", (error) => {
 });
 
 const shutdown = () => {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+  }
   process.exit(0);
 };
 
