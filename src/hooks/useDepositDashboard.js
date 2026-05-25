@@ -1,6 +1,8 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { useRealtimeDeposits } from "./useRealtimeDeposits.js";
+import { supabase } from "../supabaseClient";
 import {
   initialBancos,
   initialEmpresas,
@@ -40,6 +42,7 @@ async function apiJson(path, options = {}) {
 
 export function useDepositDashboard() {
   const { currentUser, users } = useContext(AuthContext);
+  const location = useLocation();
 
   const [bancos, setBancos] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -59,6 +62,7 @@ export function useDepositDashboard() {
   const currentUserRef = useRef(currentUser);
   const currentSelectedDateRef = useRef(currentSelectedDate);
   const lastQueryRef = useRef({ type: null, value: null });
+  const realtimeChannelRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
 
   useEffect(() => {
@@ -149,6 +153,10 @@ export function useDepositDashboard() {
 
   const handleRealtimeUpdate = useCallback(
     (updatedDepositsOrNull, deletedId) => {
+      if (location.pathname === "/kanban") {
+        return;
+      }
+
       if (Array.isArray(updatedDepositsOrNull) && updatedDepositsOrNull.length > 0) {
         setDeposits((prev) => mergeDepositsIntoView(prev, updatedDepositsOrNull));
         return;
@@ -158,7 +166,7 @@ export function useDepositDashboard() {
         setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
       }
     },
-    [mergeDepositsIntoView]
+    [location.pathname, mergeDepositsIntoView]
   );
 
   const fetchData = useCallback(async (showLoading = true) => {
@@ -528,6 +536,54 @@ export function useDepositDashboard() {
     handleRealtimeUpdate,
     null
   );
+
+  useEffect(() => {
+    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban" || !supabase) {
+      if (realtimeChannelRef.current) {
+        supabase?.removeChannel?.(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
+      return;
+    }
+
+    if (realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
+    }
+
+    const channelName = `kanban-depositos-${currentUser.id || "anon"}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "depositos" },
+        async () => {
+          try {
+            await refreshDeposits();
+          } catch (error) {
+            console.error("Error refrescando Kanban tras realtime de Supabase:", error);
+          }
+        }
+      )
+      .subscribe((status, error) => {
+        if (status === "SUBSCRIBED") {
+          console.log("✅ KANBAN realtime: Supabase conectado a depositos");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("Error en el canal Supabase realtime:", status, error || "");
+        } else {
+          console.log("🟡 KANBAN realtime status:", status);
+        }
+      });
+
+    realtimeChannelRef.current = channel;
+
+    return () => {
+      if (realtimeChannelRef.current === channel) {
+        realtimeChannelRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser, isSupabaseConnected, location.pathname, refreshDeposits]);
 
   useEffect(() => {
     if (!currentUser || !isSupabaseConnected) {
