@@ -3545,14 +3545,8 @@ export function startDepositRealtimeHub() {
       setRealtimeStatus(status, error);
 
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-        try {
-          channel?.unsubscribe?.();
-        } catch (unsubscribeError) {
-          console.warn("Backend realtime: error al desuscribir canal:", unsubscribeError);
-        } finally {
-          channel = null;
-          scheduleRealtimeReconnect();
-        }
+        channel = null;
+        scheduleRealtimeReconnect();
       }
     });
 
