@@ -1,203 +1,224 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
-import { apiGet } from "../services/backendApi.js";
 import { logger } from "../utils/logger";
 
-const BATCH_DELAY_MS = 80;
-const RECONNECT_DELAY_MS = 3000;
+const BATCH_DELAY_MS = 100;
+const RETRY_DELAY_MS = 3000;
 
-/**
- * Frontend realtime hook for deposits.
- * Listens directly to Supabase postgres_changes and hydrates affected rows via API.
- */
-export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate) => {
-  const [realtimeStatus, setRealtimeStatus] = useState("DISCONNECTED");
+export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, queryString) => {
+  const [realtimeStatus, setRealtimeStatus] = useState(null);
   const [realtimeErrors, setRealtimeErrors] = useState(0);
 
   const updateQueueRef = useRef([]);
   const processingTimeoutRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-  const channelRef = useRef(null);
   const isProcessingRef = useRef(false);
-  const reconnectingRef = useRef(false);
   const onUpdateRef = useRef(onUpdate);
-  const statusRef = useRef("DISCONNECTED");
+  const queryStringRef = useRef(queryString);
+  const statusRef = useRef("CLOSED");
+  const channelRef = useRef(null);
+  const reconnectingRef = useRef(false);
+  const retryTimeoutRef = useRef(null);
 
   useEffect(() => {
     onUpdateRef.current = onUpdate;
-  }, [onUpdate]);
+    queryStringRef.current = queryString;
+  }, [onUpdate, queryString]);
 
-  const cleanupConnection = useCallback(() => {
-    reconnectingRef.current = false;
-
-    if (processingTimeoutRef.current) {
-      clearTimeout(processingTimeoutRef.current);
-      processingTimeoutRef.current = null;
-    }
-
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-
-    if (channelRef.current && supabase) {
-      try {
-        supabase.removeChannel(channelRef.current);
-      } catch (error) {
-        logger.error("Error closing realtime channel:", error.message);
-      }
-      channelRef.current = null;
-    }
-  }, []);
-
-  const flushQueuedChanges = useCallback(async () => {
-    if (isProcessingRef.current || updateQueueRef.current.length === 0) return;
-
-    isProcessingRef.current = true;
-    const queued = [...updateQueueRef.current];
-    updateQueueRef.current = [];
-
-    const deleteIds = [...new Set(queued.filter((item) => item.eventType === "DELETE" && item.id).map((item) => item.id))];
-    const updateIds = [
-      ...new Set(
-        queued
-          .filter((item) => item.eventType !== "DELETE" && item.id)
-          .map((item) => item.id)
-      ),
-    ];
-
-    if (deleteIds.length > 0) {
-      deleteIds.forEach((id) => {
-        onUpdateRef.current?.(null, id);
-      });
-    }
-
-    if (updateIds.length > 0) {
-      try {
-        const response = await apiGet(`/depositos?ids=${encodeURIComponent(updateIds.join(","))}`);
-        const updatedDeposits = response?.data || [];
-
-        if (updatedDeposits.length > 0) {
-          onUpdateRef.current?.(updatedDeposits);
-        }
-      } catch (error) {
-        logger.error("Realtime batch hydration failed:", error.message);
-
-        const fallbackUpdates = queued
-          .filter((item) => item.eventType !== "DELETE" && item.payload)
-          .map((item) => item.payload);
-
-        if (fallbackUpdates.length > 0) {
-          onUpdateRef.current?.(fallbackUpdates);
-        }
-      }
-    }
-
-    isProcessingRef.current = false;
-
-    if (updateQueueRef.current.length > 0) {
-      processingTimeoutRef.current = setTimeout(() => {
-        flushQueuedChanges();
-      }, BATCH_DELAY_MS);
-    }
-  }, []);
-
-  const connectRealtime = useCallback(() => {
-    cleanupConnection();
-
-    if (!supabase || !isSupabaseConnected || !currentUser) {
-      statusRef.current = "DISCONNECTED";
-      setRealtimeStatus("DISCONNECTED");
+  useEffect(() => {
+    if (!isSupabaseConnected || !currentUser || !supabase) {
       return;
     }
 
-    statusRef.current = "CONNECTING";
-    setRealtimeStatus("CONNECTING");
-
-    const channelName = `frontend-depositos-${currentUser.id || "anon"}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "depositos" },
-        (payload) => {
-          const eventType = payload?.eventType;
-          const recordId = payload?.new?.id || payload?.old?.id;
-
-          if (!recordId) return;
-
-          updateQueueRef.current.push({
-            id: recordId,
-            eventType,
-            payload: payload?.new || payload?.old || null,
-          });
-
-          if (processingTimeoutRef.current) {
-            clearTimeout(processingTimeoutRef.current);
-          }
-
-          processingTimeoutRef.current = setTimeout(() => {
-            processingTimeoutRef.current = null;
-            flushQueuedChanges();
-          }, BATCH_DELAY_MS);
+    const cleanupChannel = () => {
+      if (channelRef.current) {
+        try {
+          supabase.removeChannel(channelRef.current);
+        } catch (error) {
+          logger.error("Error closing realtime channel:", error.message);
         }
-      )
-      .subscribe((status, error) => {
-        if (status === "SUBSCRIBED") {
-          statusRef.current = "SUBSCRIBED";
-          setRealtimeStatus("SUBSCRIBED");
-          setRealtimeErrors(0);
-          reconnectingRef.current = false;
-          return;
-        }
-
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          logger.error("Realtime channel error:", error);
-          statusRef.current = "CHANNEL_ERROR";
-          setRealtimeStatus("CHANNEL_ERROR");
-          setRealtimeErrors((prev) => prev + 1);
-
-          if (reconnectingRef.current) {
-            return;
-          }
-
-          reconnectingRef.current = true;
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            reconnectingRef.current = false;
-            connectRealtime();
-          }, RECONNECT_DELAY_MS);
-        }
-      });
-
-    channelRef.current = channel;
-  }, [cleanupConnection, currentUser, flushQueuedChanges, isSupabaseConnected]);
-
-  useEffect(() => {
-    if (!supabase || !isSupabaseConnected || !currentUser) {
-      cleanupConnection();
-      statusRef.current = "DISCONNECTED";
-      setRealtimeStatus("DISCONNECTED");
-      return undefined;
-    }
-
-    connectRealtime();
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-
-      if (statusRef.current !== "SUBSCRIBED") {
-        connectRealtime();
+        channelRef.current = null;
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const executeBatchQuery = async () => {
+      if (isProcessingRef.current || updateQueueRef.current.length === 0) return;
+
+      isProcessingRef.current = true;
+      const recordIds = [...new Set(updateQueueRef.current.map((item) => item.id))];
+      updateQueueRef.current = [];
+
+      let attempts = 0;
+      const maxAttempts = 3;
+      let success = false;
+
+      while (attempts < maxAttempts && !success) {
+        attempts++;
+        try {
+          const queryPromise = supabase
+            .from("depositos")
+            .select(queryStringRef.current)
+            .in("id", recordIds);
+
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout en query realtime")), 10000)
+          );
+
+          const { data: updatedDeposits, error } = await Promise.race([queryPromise, timeoutPromise]);
+
+          if (error) throw error;
+
+          if (updatedDeposits && updatedDeposits.length > 0) {
+            onUpdateRef.current(updatedDeposits);
+          }
+
+          success = true;
+        } catch (error) {
+          logger.error(`Error en intento ${attempts}:`, error.message);
+
+          if (attempts < maxAttempts) {
+            const delay = 1000 * attempts;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+        }
+      }
+
+      isProcessingRef.current = false;
+
+      if (updateQueueRef.current.length > 0) {
+        processingTimeoutRef.current = setTimeout(() => {
+          executeBatchQuery();
+        }, BATCH_DELAY_MS);
+      }
+    };
+
+    const handleRealtimeChange = (payload) => {
+      const { eventType, new: newRecord, old: oldRecord } = payload;
+
+      if (eventType === "INSERT" || eventType === "UPDATE") {
+        updateQueueRef.current.push({ id: newRecord.id, event: eventType });
+
+        if (processingTimeoutRef.current) {
+          clearTimeout(processingTimeoutRef.current);
+        }
+
+        processingTimeoutRef.current = setTimeout(() => {
+          executeBatchQuery();
+        }, BATCH_DELAY_MS);
+      } else if (eventType === "DELETE") {
+        onUpdateRef.current(null, oldRecord.id);
+      }
+    };
+
+    const hardReconnect = async () => {
+      if (reconnectingRef.current) return;
+      reconnectingRef.current = true;
+
+      try {
+        cleanupChannel();
+
+        try {
+          await supabase.auth.getSession();
+        } catch (_) {}
+        try {
+          await supabase.auth.refreshSession();
+        } catch (_) {}
+        try {
+          supabase.realtime.disconnect();
+        } catch (_) {}
+        try {
+          supabase.realtime.connect();
+        } catch (_) {}
+
+        createChannel();
+      } finally {
+        reconnectingRef.current = false;
+      }
+    };
+
+    let currentStatus = "CLOSED";
+
+    const createChannel = () => {
+      cleanupChannel();
+
+      const channel = supabase
+        .channel(`realtime-depositos-${currentUser.id}`, {
+          config: {
+            broadcast: { self: false },
+            presence: { key: currentUser.id },
+          },
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "depositos" }, handleRealtimeChange)
+        .subscribe((status, err) => {
+          currentStatus = status;
+          statusRef.current = status;
+          setRealtimeStatus(status);
+
+          if (status === "SUBSCRIBED") {
+            setRealtimeErrors(0);
+            return;
+          }
+
+          if (status === "CHANNEL_ERROR") {
+            logger.error("Realtime channel error:", err);
+          } else if (status === "TIMED_OUT") {
+            logger.error("Realtime timeout de conexión");
+          } else if (status === "CLOSED") {
+            logger.log("Realtime canal cerrado");
+          }
+
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            setRealtimeErrors((prev) => prev + 1);
+            clearTimeout(retryTimeoutRef.current);
+            retryTimeoutRef.current = setTimeout(() => {
+              hardReconnect();
+            }, RETRY_DELAY_MS);
+          }
+        });
+
+      channelRef.current = channel;
+    };
+
+    const keepConnectionAlive = async () => {
+      try {
+        const { error } = await supabase.from("depositos").select("id").limit(1);
+        return !error;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    const onVisibilityChange = async () => {
+      if (document.visibilityState !== "visible") return;
+
+      const isAlive = await keepConnectionAlive();
+      if (!isAlive) {
+        await hardReconnect();
+        return;
+      }
+
+      if (currentStatus !== "SUBSCRIBED") {
+        await hardReconnect();
+      }
+    };
+
+    const onOnline = async () => {
+      await hardReconnect();
+    };
+
+    createChannel();
+    setRealtimeStatus("CONNECTING");
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onOnline);
 
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      cleanupConnection();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onOnline);
+      clearTimeout(processingTimeoutRef.current);
+      clearTimeout(retryTimeoutRef.current);
+      cleanupChannel();
     };
-  }, [cleanupConnection, connectRealtime, currentUser, isSupabaseConnected]);
+  }, [currentUser, isSupabaseConnected]);
 
   return {
     realtimeStatus,

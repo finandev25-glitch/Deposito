@@ -1,9 +1,8 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { useRealtimeDeposits } from "./useRealtimeDeposits.js";
-import { supabase } from "../supabaseClient";
 import { toLocalISOString } from "../utils/dateFormatters";
+import { DEPOSIT_FULL_QUERY } from "../constants/depositQuery";
 
 const API_BASE = "/api";
 
@@ -34,7 +33,6 @@ async function apiJson(path, options = {}) {
 
 export function useDepositDashboard() {
   const { currentUser, users } = useContext(AuthContext);
-  const location = useLocation();
 
   const [bancos, setBancos] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -54,10 +52,6 @@ export function useDepositDashboard() {
   const currentUserRef = useRef(currentUser);
   const currentSelectedDateRef = useRef(currentSelectedDate);
   const lastQueryRef = useRef({ type: null, value: null });
-  const realtimeChannelRef = useRef(null);
-  const kanbanRealtimeQueueRef = useRef([]);
-  const kanbanRealtimeTimerRef = useRef(null);
-  const kanbanHydrateTimerRef = useRef(null);
   const refreshDepositsRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
 
@@ -173,10 +167,6 @@ export function useDepositDashboard() {
 
   const handleRealtimeUpdate = useCallback(
     (updatedDepositsOrNull, deletedId) => {
-      if (location.pathname === "/kanban") {
-        return;
-      }
-
       if (Array.isArray(updatedDepositsOrNull) && updatedDepositsOrNull.length > 0) {
         setDeposits((prev) => mergeDepositsIntoView(prev, updatedDepositsOrNull));
         return;
@@ -186,64 +176,8 @@ export function useDepositDashboard() {
         setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
       }
     },
-    [location.pathname, mergeDepositsIntoView]
+    [mergeDepositsIntoView]
   );
-
-  const applyKanbanRealtimeUpdates = useCallback(async () => {
-    if (!kanbanRealtimeQueueRef.current.length) return;
-
-    const queued = [...kanbanRealtimeQueueRef.current];
-    kanbanRealtimeQueueRef.current = [];
-
-    const uniqueIds = [...new Set(queued.filter((item) => item.id).map((item) => item.id))];
-    const deleteIds = queued.filter((item) => item.eventType === "DELETE" && item.id).map((item) => item.id);
-
-    if (deleteIds.length > 0) {
-      setDeposits((prev) => prev.filter((deposit) => !deleteIds.includes(deposit.id)));
-    }
-
-    if (uniqueIds.length === 0) return;
-
-    try {
-      const data = await apiJson(`/depositos?ids=${encodeURIComponent(uniqueIds.join(","))}`);
-      const updatedDeposits = data.data || [];
-
-      if (updatedDeposits.length > 0) {
-        setDeposits((prev) => mergeDepositsIntoView(prev, updatedDeposits));
-      }
-    } catch (error) {
-      console.error("Error actualizando Kanban realtime:", error);
-      if (refreshDepositsRef.current) {
-        await refreshDepositsRef.current();
-      }
-    }
-  }, [mergeDepositsIntoView]);
-
-  const applyKanbanPayload = useCallback((payload) => {
-    const eventType = payload?.eventType;
-    const newRecord = payload?.new || null;
-    const oldRecord = payload?.old || null;
-
-    if (eventType === "DELETE") {
-      const deleteId = oldRecord?.id;
-      if (!deleteId) return;
-      setDeposits((prev) => prev.filter((deposit) => deposit.id !== deleteId));
-      return;
-    }
-
-    if (!newRecord?.id) return;
-
-    setDeposits((prev) => {
-      const existing = prev.find((deposit) => deposit.id === newRecord.id);
-      const normalized = mergeDepositRecord(existing || {}, newRecord);
-
-      if (existing) {
-        return prev.map((deposit) => (deposit.id === normalized.id ? normalized : deposit));
-      }
-
-      return [normalized, ...prev];
-    });
-  }, [mergeDepositRecord]);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -613,10 +547,13 @@ export function useDepositDashboard() {
   const { realtimeStatus, realtimeErrors } = useRealtimeDeposits(
     isSupabaseConnected,
     currentUser,
-    handleRealtimeUpdate
+    handleRealtimeUpdate,
+    DEPOSIT_FULL_QUERY
   );
 
   useEffect(() => {
+    return () => {};
+
     if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban" || !supabase) {
       if (realtimeChannelRef.current) {
         supabase?.removeChannel?.(realtimeChannelRef.current);
