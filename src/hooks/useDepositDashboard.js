@@ -3,14 +3,6 @@ import { useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { useRealtimeDeposits } from "./useRealtimeDeposits.js";
 import { supabase } from "../supabaseClient";
-import {
-  initialBancos,
-  initialEmpresas,
-  initialUsers,
-  generateMockCuentasBancarias,
-  generateMockSucursales,
-  generateMockDeposits,
-} from "../utils/mockData";
 import { toLocalISOString } from "../utils/dateFormatters";
 
 const API_BASE = "/api";
@@ -53,7 +45,7 @@ export function useDepositDashboard() {
   const [currentSelectedDate, setCurrentSelectedDate] = useState(null);
   const [appDataLoading, setAppDataLoading] = useState(true);
   const [appDataError, setAppDataError] = useState(null);
-  const [voucherPanelState, setVoucherPanelState] = useState({
+  const [voucherPanelState] = useState({
     isOpen: false,
     voucherUrl: "",
     depositData: null,
@@ -65,6 +57,7 @@ export function useDepositDashboard() {
   const realtimeChannelRef = useRef(null);
   const kanbanRealtimeQueueRef = useRef([]);
   const kanbanRealtimeTimerRef = useRef(null);
+  const refreshDepositsRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
 
   useEffect(() => {
@@ -195,9 +188,11 @@ export function useDepositDashboard() {
       }
     } catch (error) {
       console.error("Error actualizando Kanban realtime:", error);
-      await refreshDeposits();
+      if (refreshDepositsRef.current) {
+        await refreshDepositsRef.current();
+      }
     }
-  }, [mergeDepositsIntoView, refreshDeposits]);
+  }, [mergeDepositsIntoView]);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -297,6 +292,10 @@ export function useDepositDashboard() {
 
     return fetchAllDeposits();
   }, [fetchAllDeposits, fetchDepositsByDate, fetchDepositsByPeriod]);
+
+  useEffect(() => {
+    refreshDepositsRef.current = refreshDeposits;
+  }, [refreshDeposits]);
 
   const handleSelectedDateChange = useCallback((fecha) => {
     setCurrentSelectedDate(fecha);
