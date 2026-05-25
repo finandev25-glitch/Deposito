@@ -1,50 +1,51 @@
 import { useEffect, useRef, useState } from 'react';
+import { supabase } from '../supabaseClient';
 
-/**
- * Hook opcional para escuchar el SSE del backend.
- * Hoy solo soporta la tabla de depósitos, que es el canal que el backend emite.
- */
 export function useRealtimeOptional(tableName, onUpdate, isEnabled = true) {
-  const eventSourceRef = useRef(null);
+  const channelRef = useRef(null);
   const [status, setStatus] = useState('UNSUBSCRIBED');
 
   useEffect(() => {
-    if (!isEnabled || tableName !== 'depositos') {
+    if (!isEnabled || tableName !== 'depositos' || !supabase) {
       setStatus('DISABLED');
       return;
     }
 
-    const eventSource = new EventSource('/api/events/depositos');
-    eventSourceRef.current = eventSource;
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+
     setStatus('CONNECTING');
 
-    const handleConnected = () => {
-      setStatus('SUBSCRIBED');
-    };
+    const channel = supabase
+      .channel(`optional-depositos-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'depositos' },
+        (payload) => {
+          onUpdate?.(payload);
+        }
+      )
+      .subscribe((nextStatus, error) => {
+        if (nextStatus === 'SUBSCRIBED') {
+          setStatus('SUBSCRIBED');
+          return;
+        }
 
-    const handleChange = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        onUpdate?.(payload);
-      } catch (error) {
-        console.error('Error procesando evento realtime del backend:', error);
-      }
-    };
+        if (nextStatus === 'CHANNEL_ERROR' || nextStatus === 'TIMED_OUT' || nextStatus === 'CLOSED') {
+          console.error('Error en el canal realtime de Supabase:', error || nextStatus);
+          setStatus('CHANNEL_ERROR');
+        }
+      });
 
-    const handleError = (event) => {
-      console.error('Error en el canal backend realtime:', event);
-      setStatus('CHANNEL_ERROR');
-    };
-
-    eventSource.addEventListener('connected', handleConnected);
-    eventSource.addEventListener('deposit-change', handleChange);
-    eventSource.onerror = handleError;
+    channelRef.current = channel;
 
     return () => {
-      eventSource.removeEventListener('connected', handleConnected);
-      eventSource.removeEventListener('deposit-change', handleChange);
-      eventSource.close();
-      eventSourceRef.current = null;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
       setStatus('UNSUBSCRIBED');
     };
   }, [tableName, onUpdate, isEnabled]);
@@ -52,7 +53,7 @@ export function useRealtimeOptional(tableName, onUpdate, isEnabled = true) {
   return {
     isSubscribed: status === 'SUBSCRIBED',
     status,
-    channel: eventSourceRef.current,
+    channel: channelRef.current,
   };
 }
 

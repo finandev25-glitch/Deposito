@@ -126,12 +126,35 @@ export function useDepositDashboard() {
     return false;
   }, []);
 
+  const mergeDepositRecord = useCallback((existing = {}, incoming = {}) => {
+    const merged = { ...existing, ...incoming };
+
+    ["empresa", "banco", "sucursal", "trabajador", "validado_por_usuario"].forEach((field) => {
+      const incomingValue = incoming[field];
+      const existingValue = existing[field];
+
+      if (incomingValue && typeof incomingValue === "object" && !Array.isArray(incomingValue)) {
+        merged[field] = {
+          ...(existingValue && typeof existingValue === "object" ? existingValue : {}),
+          ...incomingValue,
+        };
+      } else if (existingValue && typeof existingValue === "object" && incomingValue == null) {
+        merged[field] = existingValue;
+      }
+    });
+
+    return merged;
+  }, []);
+
   const mergeDepositsIntoView = useCallback(
     (prevDeposits, incomingDeposits) => {
       const incomingMap = new Map(incomingDeposits.map((deposit) => [deposit.id, deposit]));
 
       const next = prevDeposits
-        .map((deposit) => incomingMap.get(deposit.id) || deposit)
+        .map((deposit) => {
+          const incoming = incomingMap.get(deposit.id);
+          return incoming ? mergeDepositRecord(deposit, incoming) : deposit;
+        })
         .filter((deposit) => {
           if (!incomingMap.has(deposit.id)) return true;
           return matchesCurrentQuery(deposit);
@@ -139,12 +162,13 @@ export function useDepositDashboard() {
 
       const existingIds = new Set(next.map((deposit) => deposit.id));
       const newItems = incomingDeposits
+        .map((deposit) => mergeDepositRecord({}, deposit))
         .filter((deposit) => matchesCurrentQuery(deposit) && !existingIds.has(deposit.id))
         .sort((a, b) => new Date(b.fecha_registro) - new Date(a.fecha_registro));
 
       return [...newItems, ...next];
     },
-    [matchesCurrentQuery]
+    [matchesCurrentQuery, mergeDepositRecord]
   );
 
   const handleRealtimeUpdate = useCallback(
@@ -209,23 +233,17 @@ export function useDepositDashboard() {
 
     if (!newRecord?.id) return;
 
-    const normalized = {
-      ...newRecord,
-      empresa: newRecord.empresa || { nombre: newRecord.empresa_nombre || newRecord.empresa || "" },
-      banco: newRecord.banco || { abreviatura: newRecord.banco_abreviatura || newRecord.banco || "" },
-      sucursal: newRecord.sucursal || { nombre: newRecord.sucursal_nombre || newRecord.sucursal || "" },
-      trabajador: newRecord.trabajador || null,
-      validado_por_usuario: newRecord.validado_por_usuario || null,
-    };
-
     setDeposits((prev) => {
-      const exists = prev.some((deposit) => deposit.id === normalized.id);
-      if (exists) {
-        return prev.map((deposit) => (deposit.id === normalized.id ? { ...deposit, ...normalized } : deposit));
+      const existing = prev.find((deposit) => deposit.id === newRecord.id);
+      const normalized = mergeDepositRecord(existing || {}, newRecord);
+
+      if (existing) {
+        return prev.map((deposit) => (deposit.id === normalized.id ? normalized : deposit));
       }
+
       return [normalized, ...prev];
     });
-  }, []);
+  }, [mergeDepositRecord]);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -595,8 +613,7 @@ export function useDepositDashboard() {
   const { realtimeStatus, realtimeErrors } = useRealtimeDeposits(
     isSupabaseConnected,
     currentUser,
-    handleRealtimeUpdate,
-    null
+    handleRealtimeUpdate
   );
 
   useEffect(() => {

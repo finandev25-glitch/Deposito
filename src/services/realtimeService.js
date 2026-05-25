@@ -1,3 +1,5 @@
+import { supabase } from '../supabaseClient';
+
 let canalActivo = null;
 let estadoConexion = 'DISCONNECTED';
 let callbacks = {
@@ -26,46 +28,50 @@ export function conectarRealtime(options = {}) {
     onStatusChange: options.onStatusChange || null,
   };
 
-  const eventSource = new EventSource('/api/events/depositos');
-  canalActivo = eventSource;
-  emitStatus('CONNECTING');
+  if (!supabase) {
+    emitStatus('DISCONNECTED');
+    return null;
+  }
 
-  const handleConnected = () => {
-    emitStatus('SUBSCRIBED');
-  };
+  const canal = supabase
+    .channel(`realtime-service-${Date.now()}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'depositos' },
+      (payload) => {
+        const eventType = payload.eventType;
 
-  const handleChange = (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      const eventType = payload.eventType || payload.type;
-
-      switch (eventType) {
-        case 'INSERT':
-          callbacks.onInsert?.(payload.new || payload.record || payload);
-          break;
-        case 'UPDATE':
-          callbacks.onUpdate?.(payload.new || payload.record || payload, payload.old || null);
-          break;
-        case 'DELETE':
-          callbacks.onDelete?.(payload.old || payload.record || payload);
-          break;
-        default:
-          callbacks.onUpdate?.(payload);
+        switch (eventType) {
+          case 'INSERT':
+            callbacks.onInsert?.(payload.new || payload.record || payload);
+            break;
+          case 'UPDATE':
+            callbacks.onUpdate?.(payload.new || payload.record || payload, payload.old || null);
+            break;
+          case 'DELETE':
+            callbacks.onDelete?.(payload.old || payload.record || payload);
+            break;
+          default:
+            callbacks.onUpdate?.(payload);
+        }
       }
-    } catch (error) {
-      console.error('REALTIME SERVICE: error procesando evento', error);
-    }
-  };
+    )
+    .subscribe((status, error) => {
+      if (status === 'SUBSCRIBED') {
+        emitStatus('SUBSCRIBED');
+        return;
+      }
 
-  const handleError = (error) => {
-    emitStatus('CHANNEL_ERROR', error);
-  };
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        emitStatus('CHANNEL_ERROR', error);
+      } else {
+        emitStatus(status, error);
+      }
+    });
 
-  eventSource.addEventListener('connected', handleConnected);
-  eventSource.addEventListener('deposit-change', handleChange);
-  eventSource.onerror = handleError;
-
-  return eventSource;
+  canalActivo = canal;
+  emitStatus('CONNECTING');
+  return canal;
 }
 
 export function desconectarRealtime() {
@@ -74,7 +80,7 @@ export function desconectarRealtime() {
   }
 
   try {
-    canalActivo.close();
+    supabase?.removeChannel?.(canalActivo);
   } catch (error) {
     console.error('REALTIME SERVICE: error al cerrar canal', error);
   } finally {

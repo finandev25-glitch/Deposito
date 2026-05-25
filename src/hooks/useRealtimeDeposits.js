@@ -1,30 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiGet } from '../services/backendApi.js';
-import { logger } from '../utils/logger';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { supabase } from "../supabaseClient";
+import { apiGet } from "../services/backendApi.js";
+import { logger } from "../utils/logger";
+
+const BATCH_DELAY_MS = 80;
+const RECONNECT_DELAY_MS = 3000;
 
 /**
- * Realtime hook for the deposit backend SSE stream.
- * Handles batching, debounce, status tracking and recovery.
+ * Frontend realtime hook for deposits.
+ * Listens directly to Supabase postgres_changes and hydrates affected rows via API.
  */
-export const useRealtimeDeposits = (isBackendConnected, currentUser, onUpdate, queryString) => {
-  const [realtimeStatus, setRealtimeStatus] = useState(null);
+export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate) => {
+  const [realtimeStatus, setRealtimeStatus] = useState("DISCONNECTED");
   const [realtimeErrors, setRealtimeErrors] = useState(0);
 
   const updateQueueRef = useRef([]);
   const processingTimeoutRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
-  const keepAliveIntervalRef = useRef(null);
-  const eventSourceRef = useRef(null);
+  const channelRef = useRef(null);
   const isProcessingRef = useRef(false);
   const reconnectingRef = useRef(false);
   const onUpdateRef = useRef(onUpdate);
-  const queryStringRef = useRef(queryString);
-  const statusRef = useRef(null);
+  const statusRef = useRef("DISCONNECTED");
 
   useEffect(() => {
     onUpdateRef.current = onUpdate;
-    queryStringRef.current = queryString;
-  }, [onUpdate, queryString]);
+  }, [onUpdate]);
 
   const cleanupConnection = useCallback(() => {
     reconnectingRef.current = false;
@@ -39,51 +40,55 @@ export const useRealtimeDeposits = (isBackendConnected, currentUser, onUpdate, q
       reconnectTimeoutRef.current = null;
     }
 
-    if (keepAliveIntervalRef.current) {
-      clearInterval(keepAliveIntervalRef.current);
-      keepAliveIntervalRef.current = null;
-    }
-
-    if (eventSourceRef.current) {
+    if (channelRef.current && supabase) {
       try {
-        eventSourceRef.current.close();
+        supabase.removeChannel(channelRef.current);
       } catch (error) {
-        logger.error('Error closing realtime EventSource:', error.message);
+        logger.error("Error closing realtime channel:", error.message);
       }
-      eventSourceRef.current = null;
+      channelRef.current = null;
     }
   }, []);
 
-  const executeBatchQuery = useCallback(async () => {
+  const flushQueuedChanges = useCallback(async () => {
     if (isProcessingRef.current || updateQueueRef.current.length === 0) return;
 
     isProcessingRef.current = true;
-    const recordIds = [...new Set(updateQueueRef.current.map((item) => item.id))];
+    const queued = [...updateQueueRef.current];
     updateQueueRef.current = [];
 
-    logger.log('REALTIME batch size:', recordIds.length);
+    const deleteIds = [...new Set(queued.filter((item) => item.eventType === "DELETE" && item.id).map((item) => item.id))];
+    const updateIds = [
+      ...new Set(
+        queued
+          .filter((item) => item.eventType !== "DELETE" && item.id)
+          .map((item) => item.id)
+      ),
+    ];
 
-    let attempts = 0;
-    const maxAttempts = 3;
-    let success = false;
+    if (deleteIds.length > 0) {
+      deleteIds.forEach((id) => {
+        onUpdateRef.current?.(null, id);
+      });
+    }
 
-    while (attempts < maxAttempts && !success) {
-      attempts++;
+    if (updateIds.length > 0) {
       try {
-        const response = await apiGet(`/depositos?ids=${encodeURIComponent(recordIds.join(','))}`);
+        const response = await apiGet(`/depositos?ids=${encodeURIComponent(updateIds.join(","))}`);
         const updatedDeposits = response?.data || [];
 
         if (updatedDeposits.length > 0) {
-          onUpdateRef.current(updatedDeposits);
+          onUpdateRef.current?.(updatedDeposits);
         }
-
-        success = true;
       } catch (error) {
-        logger.error(`Realtime batch attempt ${attempts} failed:`, error.message);
+        logger.error("Realtime batch hydration failed:", error.message);
 
-        if (attempts < maxAttempts) {
-          const delay = 1000 * attempts;
-          await new Promise((resolve) => setTimeout(resolve, delay));
+        const fallbackUpdates = queued
+          .filter((item) => item.eventType !== "DELETE" && item.payload)
+          .map((item) => item.payload);
+
+        if (fallbackUpdates.length > 0) {
+          onUpdateRef.current?.(fallbackUpdates);
         }
       }
     }
@@ -92,113 +97,107 @@ export const useRealtimeDeposits = (isBackendConnected, currentUser, onUpdate, q
 
     if (updateQueueRef.current.length > 0) {
       processingTimeoutRef.current = setTimeout(() => {
-        executeBatchQuery();
-      }, 100);
+        flushQueuedChanges();
+      }, BATCH_DELAY_MS);
     }
   }, []);
 
   const connectRealtime = useCallback(() => {
     cleanupConnection();
 
-    if (!isBackendConnected || !currentUser) {
+    if (!supabase || !isSupabaseConnected || !currentUser) {
+      statusRef.current = "DISCONNECTED";
+      setRealtimeStatus("DISCONNECTED");
       return;
     }
 
-    statusRef.current = 'CONNECTING';
-    setRealtimeStatus('CONNECTING');
+    statusRef.current = "CONNECTING";
+    setRealtimeStatus("CONNECTING");
 
-    const eventSource = new EventSource('/api/events/depositos');
-    eventSourceRef.current = eventSource;
+    const channelName = `frontend-depositos-${currentUser.id || "anon"}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "depositos" },
+        (payload) => {
+          const eventType = payload?.eventType;
+          const recordId = payload?.new?.id || payload?.old?.id;
 
-    const handleConnected = () => {
-      statusRef.current = 'SUBSCRIBED';
-      setRealtimeStatus('SUBSCRIBED');
-      setRealtimeErrors(0);
-      reconnectingRef.current = false;
-    };
+          if (!recordId) return;
 
-    const handleChange = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        const { eventType, new: newRecord, old: oldRecord } = payload;
-
-        if (eventType === 'INSERT' || eventType === 'UPDATE') {
-          updateQueueRef.current.push({ id: newRecord.id, event: eventType });
+          updateQueueRef.current.push({
+            id: recordId,
+            eventType,
+            payload: payload?.new || payload?.old || null,
+          });
 
           if (processingTimeoutRef.current) {
             clearTimeout(processingTimeoutRef.current);
           }
 
           processingTimeoutRef.current = setTimeout(() => {
-            executeBatchQuery();
-          }, 100);
-        } else if (eventType === 'DELETE') {
-          onUpdateRef.current(null, oldRecord.id);
+            processingTimeoutRef.current = null;
+            flushQueuedChanges();
+          }, BATCH_DELAY_MS);
         }
-      } catch (error) {
-        logger.error('Error processing deposit SSE event:', error.message);
-      }
-    };
-
-    const handleError = (error) => {
-      logger.error('Realtime channel error:', error);
-      statusRef.current = 'CHANNEL_ERROR';
-      setRealtimeStatus('CHANNEL_ERROR');
-      setRealtimeErrors((prev) => prev + 1);
-
-      if (reconnectingRef.current) {
-        return;
-      }
-
-      reconnectingRef.current = true;
-      reconnectTimeoutRef.current = setTimeout(() => {
-        reconnectTimeoutRef.current = null;
-        reconnectingRef.current = false;
-        connectRealtime();
-      }, 3000);
-    };
-
-    eventSource.addEventListener('connected', handleConnected);
-    eventSource.addEventListener('deposit-change', handleChange);
-    eventSource.onerror = handleError;
-
-    keepAliveIntervalRef.current = setInterval(async () => {
-      try {
-        await apiGet('/health');
-      } catch (error) {
-        logger.error('Realtime keep alive failed:', error.message);
-        if (document.visibilityState === 'visible') {
-          connectRealtime();
+      )
+      .subscribe((status, error) => {
+        if (status === "SUBSCRIBED") {
+          statusRef.current = "SUBSCRIBED";
+          setRealtimeStatus("SUBSCRIBED");
+          setRealtimeErrors(0);
+          reconnectingRef.current = false;
+          return;
         }
-      }
-    }, 2 * 60 * 1000);
-  }, [cleanupConnection, currentUser, executeBatchQuery, isBackendConnected]);
+
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          logger.error("Realtime channel error:", error);
+          statusRef.current = "CHANNEL_ERROR";
+          setRealtimeStatus("CHANNEL_ERROR");
+          setRealtimeErrors((prev) => prev + 1);
+
+          if (reconnectingRef.current) {
+            return;
+          }
+
+          reconnectingRef.current = true;
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            reconnectingRef.current = false;
+            connectRealtime();
+          }, RECONNECT_DELAY_MS);
+        }
+      });
+
+    channelRef.current = channel;
+  }, [cleanupConnection, currentUser, flushQueuedChanges, isSupabaseConnected]);
 
   useEffect(() => {
-    if (!isBackendConnected || !currentUser) {
+    if (!supabase || !isSupabaseConnected || !currentUser) {
       cleanupConnection();
-      statusRef.current = 'DISCONNECTED';
-      setRealtimeStatus('DISCONNECTED');
+      statusRef.current = "DISCONNECTED";
+      setRealtimeStatus("DISCONNECTED");
       return undefined;
     }
 
     connectRealtime();
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== "visible") return;
 
-      if (statusRef.current !== 'SUBSCRIBED') {
+      if (statusRef.current !== "SUBSCRIBED") {
         connectRealtime();
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       cleanupConnection();
     };
-  }, [cleanupConnection, connectRealtime, currentUser, isBackendConnected]);
+  }, [cleanupConnection, connectRealtime, currentUser, isSupabaseConnected]);
 
   return {
     realtimeStatus,
