@@ -57,6 +57,7 @@ export function useDepositDashboard() {
   const realtimeChannelRef = useRef(null);
   const kanbanRealtimeQueueRef = useRef([]);
   const kanbanRealtimeTimerRef = useRef(null);
+  const kanbanHydrateTimerRef = useRef(null);
   const refreshDepositsRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
 
@@ -193,6 +194,38 @@ export function useDepositDashboard() {
       }
     }
   }, [mergeDepositsIntoView]);
+
+  const applyKanbanPayload = useCallback((payload) => {
+    const eventType = payload?.eventType;
+    const newRecord = payload?.new || null;
+    const oldRecord = payload?.old || null;
+
+    if (eventType === "DELETE") {
+      const deleteId = oldRecord?.id;
+      if (!deleteId) return;
+      setDeposits((prev) => prev.filter((deposit) => deposit.id !== deleteId));
+      return;
+    }
+
+    if (!newRecord?.id) return;
+
+    const normalized = {
+      ...newRecord,
+      empresa: newRecord.empresa || { nombre: newRecord.empresa_nombre || newRecord.empresa || "" },
+      banco: newRecord.banco || { abreviatura: newRecord.banco_abreviatura || newRecord.banco || "" },
+      sucursal: newRecord.sucursal || { nombre: newRecord.sucursal_nombre || newRecord.sucursal || "" },
+      trabajador: newRecord.trabajador || null,
+      validado_por_usuario: newRecord.validado_por_usuario || null,
+    };
+
+    setDeposits((prev) => {
+      const exists = prev.some((deposit) => deposit.id === normalized.id);
+      if (exists) {
+        return prev.map((deposit) => (deposit.id === normalized.id ? { ...deposit, ...normalized } : deposit));
+      }
+      return [normalized, ...prev];
+    });
+  }, []);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -597,6 +630,8 @@ export function useDepositDashboard() {
 
           if (!recordId) return;
 
+          applyKanbanPayload(payload);
+
           kanbanRealtimeQueueRef.current.push({
             id: recordId,
             eventType,
@@ -609,7 +644,20 @@ export function useDepositDashboard() {
           kanbanRealtimeTimerRef.current = setTimeout(() => {
             kanbanRealtimeTimerRef.current = null;
             applyKanbanRealtimeUpdates();
-          }, 120);
+          }, 80);
+
+          if (kanbanHydrateTimerRef.current) {
+            clearTimeout(kanbanHydrateTimerRef.current);
+          }
+
+          kanbanHydrateTimerRef.current = setTimeout(() => {
+            kanbanHydrateTimerRef.current = null;
+            if (refreshDepositsRef.current) {
+              refreshDepositsRef.current().catch((error) => {
+                console.error("Error rehidratando Kanban realtime:", error);
+              });
+            }
+          }, 1500);
         }
       )
       .subscribe((status, error) => {
@@ -632,10 +680,14 @@ export function useDepositDashboard() {
         clearTimeout(kanbanRealtimeTimerRef.current);
         kanbanRealtimeTimerRef.current = null;
       }
+      if (kanbanHydrateTimerRef.current) {
+        clearTimeout(kanbanHydrateTimerRef.current);
+        kanbanHydrateTimerRef.current = null;
+      }
       kanbanRealtimeQueueRef.current = [];
       supabase.removeChannel(channel);
     };
-  }, [applyKanbanRealtimeUpdates, currentUser, isSupabaseConnected, location.pathname]);
+  }, [applyKanbanPayload, applyKanbanRealtimeUpdates, currentUser, isSupabaseConnected, location.pathname]);
 
   useEffect(() => {
     if (!currentUser || !isSupabaseConnected) {
