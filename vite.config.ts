@@ -11,15 +11,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-    hmr: {
-      clientPort: 443
-    },
     proxy: {
-      '/chatwoot-api': {
-        target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
+      '/api': {
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/chatwoot-api/, '')
+        secure: false
       }
     }
   },
@@ -28,11 +24,10 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     proxy: {
-      '/chatwoot-api': {
-        target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
+      '/api': {
+        target: 'http://localhost:3000',
         changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/chatwoot-api/, '')
+        secure: false
       }
     }
   }

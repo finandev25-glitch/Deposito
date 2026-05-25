@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Wifi, WifiOff, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase } from "../supabaseClient.js";
 
 const ConnectionStatus = () => {
   const [isOnline, setIsOnline] = useState(true);
@@ -16,28 +15,10 @@ const ConnectionStatus = () => {
   // Verificar conexión a Supabase
   const checkSupabaseConnection = async () => {
     try {
-      console.log("🔍 Iniciando verificación de conexión a Supabase...");
-
-      // Crear una promesa con timeout manual más largo para conexiones lentas
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Timeout de verificación")), 15000);
-      });
-
-      const queryPromise = supabase.from("depositos").select("id").limit(1);
-
-      // Competir entre la consulta y el timeout
-      const result = await Promise.race([queryPromise, timeoutPromise]);
-
-      const { error, data } = result;
-
-      console.log("✅ Resultado de verificación Supabase:", {
-        error: error?.message || "ninguno",
-        dataLength: data?.length || 0,
-        success: !error,
-      });
-
-      // Consideramos exitoso si no hay error
-      return !error;
+      const response = await fetch("/api/connection/status");
+      if (!response.ok) return false;
+      const data = await response.json();
+      return !!data.connected;
     } catch (error) {
       console.error(
         "❌ Error verificando conexión a Supabase:",

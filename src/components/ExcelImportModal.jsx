@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Upload, AlertCircle, CheckCircle } from 'lucide-react';
+import { apiGet } from '../services/backendApi.js';
 
-const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
+const ExcelImportModal = ({ onClose, onImport }) => {
   const [pastedData, setPastedData] = useState('');
   const [parsedData, setParsedData] = useState([]);
   const [errors, setErrors] = useState([]);
@@ -11,21 +12,20 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
   const handlePaste = (e) => {
     const text = e.target.value;
     setPastedData(text);
-    
+
     if (!text.trim()) {
       setParsedData([]);
       setErrors([]);
       return;
     }
 
-    // Parsear datos pegados (TSV - Tab Separated Values)
     const lines = text.trim().split('\n');
     const parsed = [];
     const newErrors = [];
 
     lines.forEach((line, index) => {
       const columns = line.split('\t');
-      
+
       if (columns.length < 4) {
         newErrors.push(`Línea ${index + 1}: Faltan columnas (se esperan al menos 4)`);
         return;
@@ -33,7 +33,6 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
 
       const [sucursal, empresa, nombreTrabajador, telefono, tipo] = columns;
 
-      // Validaciones
       if (!sucursal?.trim()) {
         newErrors.push(`Línea ${index + 1}: Falta nombre de sucursal`);
         return;
@@ -49,8 +48,7 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
         return;
       }
 
-      // Limpiar y formatear teléfono (agregar 51 si no lo tiene)
-      let cleanPhone = telefono.trim().replace(/\D/g, ''); // Solo números
+      let cleanPhone = telefono.trim().replace(/\D/g, '');
       if (!cleanPhone.startsWith('51')) {
         cleanPhone = '51' + cleanPhone;
       }
@@ -58,7 +56,7 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
       parsed.push({
         sucursal: sucursal.trim(),
         empresa: empresa?.trim() || '',
-        nombreTrabajador: nombreTrabajador.trim().replace(/\s+/g, ' '), // Eliminar espacios extras
+        nombreTrabajador: nombreTrabajador.trim().replace(/\s+/g, ' '),
         telefono: cleanPhone,
         tipo: tipo?.trim().toUpperCase() || 'AGREGAR'
       });
@@ -67,8 +65,7 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
     setParsedData(parsed);
     setErrors(newErrors);
 
-    // Validar registros con acción ELIMINAR
-    if (supabase && parsed.length > 0) {
+    if (parsed.length > 0) {
       validateDeleteRecords(parsed);
     }
   };
@@ -79,14 +76,14 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
 
     for (const record of data) {
       const tipo = record.tipo?.toUpperCase();
+      const phoneTerm = String(record.telefono || '').replace(/\D/g, '');
 
       if (tipo === 'ELIMINAR') {
-        // Buscar trabajador solo por teléfono para ELIMINAR (más flexible)
-        const { data: existingWorker } = await supabase
-          .from('sucursal_personal')
-          .select('id, nombre, estado')
-          .eq('telefono_origen', record.telefono)
-          .maybeSingle();
+        const response = await apiGet(`/personal/search?q=${encodeURIComponent(phoneTerm)}&limit=5&includeInactive=1`);
+        const existingWorker = (response.data || []).find((worker) => {
+          const workerPhone = String(worker.telefono_origen || '').replace(/\D/g, '');
+          return workerPhone === phoneTerm;
+        }) || null;
 
         let validationMsg = null;
         if (!existingWorker) {
@@ -101,12 +98,11 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
           validationMessage: validationMsg
         });
       } else if (tipo === 'AGREGAR' || !tipo) {
-        // Buscar duplicado solo por teléfono para AGREGAR (más flexible)
-        const { data: existingWorker } = await supabase
-          .from('sucursal_personal')
-          .select('id, estado')
-          .eq('telefono_origen', record.telefono)
-          .maybeSingle();
+        const response = await apiGet(`/personal/search?q=${encodeURIComponent(phoneTerm)}&limit=5&includeInactive=1`);
+        const existingWorker = (response.data || []).find((worker) => {
+          const workerPhone = String(worker.telefono_origen || '').replace(/\D/g, '');
+          return workerPhone === phoneTerm;
+        }) || null;
 
         let validationMsg = null;
         if (existingWorker) {
@@ -162,7 +158,6 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
         onClick={(e) => e.stopPropagation()}
         className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
       >
-        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center space-x-3">
             <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
@@ -185,9 +180,7 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
-          {/* Instructions */}
           <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
             <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">
               Formato esperado:
@@ -201,7 +194,6 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
             </ul>
           </div>
 
-          {/* Paste Area */}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Pega los datos aquí:
@@ -214,7 +206,6 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
             />
           </div>
 
-          {/* Errors */}
           {errors.length > 0 && (
             <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <div className="flex items-center space-x-2 mb-2">
@@ -231,7 +222,12 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
             </div>
           )}
 
-          {/* Preview */}
+          {validating && (
+            <div className="mb-4 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+              Validando registros contra el backend...
+            </div>
+          )}
+
           {parsedData.length > 0 && errors.length === 0 && (
             <div className="mb-4">
               <div className="flex items-center space-x-2 mb-2">
@@ -292,7 +288,6 @@ const ExcelImportModal = ({ onClose, onImport, empresas, supabase }) => {
           )}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end space-x-3 p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
           <button
             onClick={onClose}

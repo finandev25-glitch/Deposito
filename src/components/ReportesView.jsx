@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { motion } from 'framer-motion';
-import { supabase } from '../supabaseClient.js';
 import { AuthContext } from '../contexts/AuthContext.jsx';
 import {
   TrendingUp,
@@ -35,7 +34,7 @@ const ReportesView = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('mes');
   const [selectedTrendPeriod, setSelectedTrendPeriod] = useState('semana'); // NUEVO: Filtro de período para confirmados/rechazados
 
-  const isSupabaseConnected = supabase && currentUser;
+  const isSupabaseConnected = !!currentUser;
 
   // Función para traducir días y meses al español
   const translateDayToSpanish = (dayText) => {
@@ -129,93 +128,19 @@ const ReportesView = () => {
     try {
       if (!isBackground) setLoading(true);
 
-      // Paralelizar todas las llamadas RPC para máxima velocidad
-      const [
-        summaryRes,
-        sucursalRes,
-        bancoRes,
-        trendsRes,
-        crUSDRes,
-        crPENRes,
-        topSucursalesRes,
-        rejectedRes
-      ] = await Promise.all([
-        supabase.rpc('get_deposits_summary_by_currency', { p_moneda: null }),
-        supabase.rpc('get_confirmed_deposits_by_sucursal_currency', { p_moneda: null }),
-        supabase.rpc('get_confirmed_deposits_by_banco_currency', { p_moneda: null }),
-        supabase.rpc('get_daily_deposit_trends_currency', { p_moneda: null }),
-        supabase.rpc('get_daily_confirmed_rejected_by_currency', {
-          p_moneda: 'USD',
-          p_periodo: selectedTrendPeriod
-        }),
-        supabase.rpc('get_daily_confirmed_rejected_by_currency', {
-          p_moneda: 'PEN',
-          p_periodo: selectedTrendPeriod
-        }),
-        supabase.rpc('get_top_sucursales_by_confirmations', { p_limit: 10 }),
-        supabase.rpc('get_rejected_deposits_by_sucursal', { p_limit: 10 })
-      ]);
+      const response = await fetch(`/api/reportes/summary?trendPeriod=${selectedTrendPeriod}`);
+      if (!response.ok) throw new Error("No se pudieron cargar los reportes");
+      const reportData = await response.json();
 
-      // Verificar errores
-      if (summaryRes.error) throw summaryRes.error;
-      if (sucursalRes.error) throw sucursalRes.error;
-      if (bancoRes.error) throw bancoRes.error;
-      if (trendsRes.error) throw trendsRes.error;
-      if (crUSDRes.error) throw crUSDRes.error;
-      if (crPENRes.error) throw crPENRes.error;
-      if (topSucursalesRes.error) throw topSucursalesRes.error;
-      if (rejectedRes.error) throw rejectedRes.error;
-
-      // Traducir días al español para USD
-      const confirmedRejectedUSDSpanish = crUSDRes.data?.map(item => ({
-        ...item,
-        dia: translateDayToSpanish(item.dia)
-      })) || [];
-
-      // Traducir días al español para PEN
-      const confirmedRejectedPENSpanish = crPENRes.data?.map(item => ({
-        ...item,
-        dia: translateDayToSpanish(item.dia)
-      })) || [];
-
-      // Agrupar datos de banco y sucursal por nombre para mostrar ambas monedas juntas
-      const groupByName = (data) => {
-        const grouped = {};
-        data.forEach(item => {
-          if (!grouped[item.nombre]) {
-            grouped[item.nombre] = {
-              nombre: item.nombre,
-              usd: { monto: 0, cantidad: 0, porcentaje: 0 },
-              pen: { monto: 0, cantidad: 0, porcentaje: 0 }
-            };
-          }
-          if (item.moneda === 'USD') {
-            grouped[item.nombre].usd = {
-              monto: item.monto,
-              cantidad: item.cantidad,
-              porcentaje: item.porcentaje
-            };
-          } else if (item.moneda === 'PEN') {
-            grouped[item.nombre].pen = {
-              monto: item.monto,
-              cantidad: item.cantidad,
-              porcentaje: item.porcentaje
-            };
-          }
-        });
-        return Object.values(grouped);
-      };
-
-      // Guardar summary como array para separar USD y PEN
       setReportes({
-        summary: summaryRes.data || [],  // Array con USD y PEN separados
-        bySucursal: groupByName(sucursalRes.data || []),
-        byBanco: groupByName(bancoRes.data || []),
-        trends: trendsRes.data || [],
-        confirmedRejectedUSD: confirmedRejectedUSDSpanish,
-        confirmedRejectedPEN: confirmedRejectedPENSpanish,
-        topSucursales: topSucursalesRes.data || [],
-        rejectedBySucursal: rejectedRes.data || []
+        summary: reportData.summary || [],
+        bySucursal: reportData.bySucursal || [],
+        byBanco: reportData.byBanco || [],
+        trends: reportData.trends || [],
+        confirmedRejectedUSD: reportData.confirmedRejectedUSD || [],
+        confirmedRejectedPEN: reportData.confirmedRejectedPEN || [],
+        topSucursales: reportData.topSucursales || [],
+        rejectedBySucursal: reportData.rejectedBySucursal || []
       });
 
     } catch (error) {

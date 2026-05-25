@@ -1,8 +1,8 @@
 import React, { useState, useContext } from 'react';
 import { motion } from 'framer-motion';
 import { KeyRound, Lock, Eye, EyeOff, AlertCircle, CheckCircle } from 'lucide-react';
-import { supabase } from '../supabaseClient';
 import { AuthContext } from '../contexts/AuthContext';
+import { apiPost } from '../services/backendApi.js';
 
 const CambiarContrasena = () => {
   const { currentUser } = useContext(AuthContext);
@@ -51,80 +51,35 @@ const CambiarContrasena = () => {
     loadingRef.current = true;
 
     try {
-      if (!supabase) {
-        throw new Error('Supabase no está configurado');
+      console.log('🔐 Intentando cambiar contraseña para:', currentUser?.email || currentUser?.usuario);
+
+      const email = currentUser?.email || currentUser?.usuario;
+      if (!email) {
+        throw new Error('No se pudo determinar el correo del usuario actual.');
       }
 
-      console.log('🔐 Intentando cambiar contraseña para:', currentUser.email || currentUser.usuario);
-
-      // Verificar que hay sesión activa
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-      if (sessionError || !session) {
-        throw new Error('No hay sesión activa. Por favor inicia sesión nuevamente.');
+      if (!currentPassword) {
+        throw new Error('Ingresa tu contraseña actual');
       }
 
-      console.log('✅ Sesión activa detectada');
-      console.log('📧 Email de sesión:', session.user.email);
+      const loginResponse = await apiPost('/auth/login', {
+        email,
+        password: currentPassword,
+      });
 
-      // Verificar contraseña actual usando verifyOtp o un approach alternativo
-      // Como Supabase no tiene un método directo para verificar contraseña sin afectar sesión,
-      // confiamos en que el usuario ya está autenticado
+      const session = loginResponse?.data?.session;
+      if (!session?.access_token || !session?.refresh_token) {
+        throw new Error('No se pudo validar la sesión actual.');
+      }
 
-      // Intentar actualizar la contraseña
-      console.log('🔄 Enviando actualización de contraseña...');
-
-      // Crear una promesa con timeout
-      const updatePromise = supabase.auth.updateUser({
+      const updateResponse = await apiPost('/auth/password', {
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
         password: newPassword,
       });
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('TIMEOUT_UPDATE')), 5000)
-      );
-
-      let result;
-      try {
-        result = await Promise.race([updatePromise, timeoutPromise]);
-        console.log('📨 Respuesta completa de updateUser:', result);
-      } catch (err) {
-        if (err.message === 'TIMEOUT_UPDATE') {
-          // Si hubo timeout, asumimos que funcionó (ya que vimos USER_UPDATED)
-          console.log('⏱️ Timeout, pero probablemente se actualizó (vimos USER_UPDATED)');
-          // Esperar un poco más para que USER_UPDATED termine de procesar
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          setLoading(false);
-          loadingRef.current = false;
-          setMessage({
-            type: 'success',
-            text: 'Contraseña actualizada exitosamente. Tu sesión se mantendrá activa.',
-          });
-          setNewPassword('');
-          setConfirmPassword('');
-          return; // Salir de la función
-        }
-        throw err;
-      }
-
-      const { data, error: updateError } = result;
-
-      if (updateError) {
-        console.error('❌ Error al actualizar contraseña:', updateError);
-
-        // Mensajes de error más descriptivos
-        let errorMessage = 'Error al actualizar la contraseña';
-
-        if (updateError.message.includes('New password should be different')) {
-          errorMessage = 'La nueva contraseña debe ser diferente a la actual';
-        } else if (updateError.message.includes('Password should be at least')) {
-          errorMessage = 'La contraseña debe tener al menos 6 caracteres';
-        } else if (updateError.message.includes('email')) {
-          errorMessage = 'Se requiere confirmación por email. Revisa tu correo electrónico.';
-        } else {
-          errorMessage = updateError.message;
-        }
-
-        throw new Error(errorMessage);
+      if (!updateResponse?.data) {
+        throw new Error('No se pudo actualizar la contraseña');
       }
 
       console.log('✅ Contraseña actualizada exitosamente');

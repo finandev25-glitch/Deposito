@@ -3,6 +3,9 @@ import { gapi } from 'gapi-script';
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const READONLY_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
+
+let readonlyInitPromise = null;
 
 /**
  * Inicializa el cliente de Google API
@@ -45,6 +48,105 @@ export const signIn = async () => {
     console.error('Error al iniciar sesión:', error);
     return false;
   }
+};
+
+/**
+ * Inicializa Drive con scope readonly para descargas.
+ */
+export const ensureGoogleDriveReadonlyAuth = async () => {
+  if (!readonlyInitPromise) {
+    readonlyInitPromise = new Promise((resolve, reject) => {
+      gapi.load('auth2', async () => {
+        try {
+          const authInstance = await gapi.auth2.init({
+            client_id: CLIENT_ID,
+            scope: READONLY_SCOPES,
+          });
+          if (!authInstance.isSignedIn.get()) {
+            await authInstance.signIn();
+          }
+
+          resolve(authInstance);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  }
+
+  return readonlyInitPromise;
+};
+
+/**
+ * Devuelve el access token OAuth de Google Drive.
+ */
+export const getGoogleDriveAccessToken = () => {
+  try {
+    const authInstance = gapi.auth2.getAuthInstance();
+    const currentUser = authInstance?.currentUser?.get?.();
+    return currentUser?.getAuthResponse?.()?.access_token || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Extrae el ID de archivo de Google Drive desde una URL.
+ */
+export const extractGoogleDriveFileId = (value) => {
+  if (!value) return null;
+
+  const text = String(value);
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Descarga un archivo binario de Google Drive usando Drive API.
+ */
+export const downloadGoogleDriveFileBlob = async (sourceUrl) => {
+  const fileId = extractGoogleDriveFileId(sourceUrl);
+  if (!fileId) {
+    throw new Error('La URL no corresponde a un archivo de Google Drive');
+  }
+
+  await ensureGoogleDriveReadonlyAuth();
+  const accessToken = getGoogleDriveAccessToken();
+
+  if (!accessToken) {
+    throw new Error('No se pudo obtener el access token de Google Drive');
+  }
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&acknowledgeAbuse=true`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(
+      text || `Drive API devolvió HTTP ${response.status} al descargar el archivo`
+    );
+  }
+
+  return response.blob();
 };
 
 /**

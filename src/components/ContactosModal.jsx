@@ -8,7 +8,7 @@ import {
   User,
   Loader2,
 } from "lucide-react";
-import { supabase } from "../supabaseClient";
+import { apiGet } from "../services/backendApi.js";
 
 const ContactosModal = ({ onClose }) => {
   const [contactos, setContactos] = useState([]);
@@ -57,39 +57,10 @@ const ContactosModal = ({ onClose }) => {
     try {
       console.log("🔍 Obteniendo contactos desde sucursal_personal...");
 
-      // Obtener todos los trabajadores con teléfono de la base de datos
-      const { data: trabajadoresData, error: trabajadorError } = await supabase
-        .from("sucursal_personal")
-        .select(
-          `
-          id,
-          nombre,
-          telefono_origen,
-          empresa,
-          es_responsable,
-          estado,
-          sucursales:sucursal_id(
-            id,
-            nombre,
-            telefono,
-            estado
-          )
-        `
-        )
-        .not("telefono_origen", "is", null)
-        .neq("telefono_origen", "")
-        .order("nombre", { ascending: true });
+      const response = await apiGet("/dashboard/bootstrap");
+      const trabajadoresData = response.personal || [];
 
-      if (trabajadorError) {
-        console.error("❌ Error consultando trabajadores:", trabajadorError);
-        setError(`Error al cargar contactos: ${trabajadorError.message}`);
-        setLoading(false);
-        return;
-      }
-
-      console.log(`✅ Trabajadores encontrados: ${trabajadoresData?.length || 0}`);
-
-      if (!trabajadoresData || trabajadoresData.length === 0) {
+      if (!trabajadoresData.length) {
         setError("No hay contactos con teléfono registrado en el sistema.");
         setLoading(false);
         return;
@@ -104,7 +75,7 @@ const ContactosModal = ({ onClose }) => {
         empresa: trabajador.empresa,
         es_responsable: trabajador.es_responsable,
         estado: trabajador.estado,
-        sucursal: trabajador.sucursales,
+        sucursal: trabajador.sucursal,
       }));
 
       // Filtrar duplicados por teléfono

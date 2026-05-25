@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Voucher Side Panel",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7bBRmAcImdi+hrlzBjkZ3P5/nNT2HlAFj7mILEKAgxlwQ2XfPODZxp/qkedaQt3O8jvNLA9L63FAbEyBF4AJV5xV2sFfRn6JVk1BeYT6/aLpbQgE6pj8r0wh6/d7/nllzci1s+UGWyjVyeGSzX9iRci9ckcap7D8IMulqX7iaBeJaSvuCHxyP4CbAkYqZe89ntNrriIWsqCim5OUvjylC50h0auIHxBbQUxw0posq1zqsRVZNUfyjG9MACSk10QB2hLiTUDwFCbEZ3lLSqBFsxUWpF7EXxrt7NENzvghrPqcU39t6UlcoWAf+2pjtFZHBowQVBv5jbFHPL4EUKWYwQIDAQAB",
+  "description": "Panel lateral persistente para ver el voucher y los datos clave del depósito.",
+  "permissions": ["sidePanel", "storage", "tabs", "scripting", "activeTab", "windows"],
+  "host_permissions": [
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "https://www.tlcbcp.com/*",
+    "https://tlcbcp.com/*",
+    "https://*.tlcbcp.com/*",
+    "https://empresas.interbank.pe/*",
+    "https://*.interbank.pe/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Abrir panel de vouchers"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

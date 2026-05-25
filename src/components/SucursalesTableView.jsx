@@ -12,7 +12,7 @@ import {
   CheckCircle,
   XCircle
 } from 'lucide-react';
-import { supabase } from '../supabaseClient.js';
+import { apiGet } from '../services/backendApi.js';
 
 const SucursalesTableView = ({ sucursales }) => {
   const [allPersonal, setAllPersonal] = useState([]);
@@ -25,34 +25,17 @@ const SucursalesTableView = ({ sucursales }) => {
   // Cargar todos los trabajadores
   useEffect(() => {
     const fetchAllPersonal = async () => {
-      if (!supabase) return;
-
       try {
         setLoading(true);
-        const { data, error } = await supabase
-          .from('sucursal_personal')
-          .select(`
-            id,
-            nombre,
-            telefono_origen,
-            empresa,
-            estado,
-            tipo_registro,
-            created_at,
-            sucursal_id,
-            sucursales (
-              id,
-              nombre
-            )
-          `)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          console.error('Error fetching personal:', error);
-          return;
-        }
-
-        setAllPersonal(data || []);
+        const response = await apiGet('/dashboard/bootstrap');
+        const sucursalMap = new Map(
+          (response.sucursales || []).map((sucursal) => [String(sucursal.id), sucursal])
+        );
+        const personal = (response.personal || []).map((person) => ({
+          ...person,
+          sucursales: sucursalMap.get(String(person.sucursal_id)) || null,
+        }));
+        setAllPersonal(personal);
       } catch (error) {
         console.error('Error:', error);
       } finally {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { supabase } from "../supabaseClient.js";
 import yCloudService from "../services/yCloudService.js";
+import { apiGet } from "../services/backendApi.js";
 import {
   Send,
   MessageSquare,
@@ -72,21 +72,10 @@ const EnviarMensajeYCloud = () => {
       setLoading(true);
       console.log("Cargando configuraciones YCloud...");
 
-      const { data, error } = await supabase
-        .from("ycloud_config")
-        .select("*")
-        .eq("activo", true)
-        .order("creado_en", { ascending: false });
-
-      if (error) {
-        console.error("Error cargando configuraciones:", error);
-        setError(`Error al cargar configuraciones: ${error.message}`);
-        setConfigs([]);
-        return;
-      }
-
+      const response = await apiGet("/ycloud/configs/active");
+      const data = response.data || [];
       console.log("Datos recibidos:", data);
-      setConfigs(data || []);
+      setConfigs(data);
 
       if (data && data.length > 0) {
         setSelectedConfig(data[0]);
@@ -486,9 +475,7 @@ Escribe: header, body, o button`
               <select
                 value={selectedConfig?.id || ""}
                 onChange={(e) => {
-                  const config = configs.find(
-                    (c) => c.id === parseInt(e.target.value)
-                  );
+                  const config = configs.find((c) => String(c.id) === String(e.target.value));
                   setSelectedConfig(config);
                 }}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:text-gray-100"

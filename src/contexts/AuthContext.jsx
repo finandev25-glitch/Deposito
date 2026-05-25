@@ -1,296 +1,302 @@
-import React, { createContext, useState, useEffect } from "react";
-import { supabase } from "../supabaseClient";
-import { initialUsers } from "../utils/mockData.js";
+import React, { createContext, useCallback, useEffect, useState } from "react";
+import { apiGet, apiPost, apiPut } from "../services/backendApi.js";
 
 export const AuthContext = createContext();
+
+const SESSION_KEY = "control-depositos-auth-session";
+const CURRENT_USER_KEY = "control-depositos-current-user";
+
+function readStoredJSON(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn(`No se pudo leer ${key}:`, error);
+    return null;
+  }
+}
+
+function writeStoredJSON(key, value) {
+  try {
+    if (value == null) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn(`No se pudo guardar ${key}:`, error);
+  }
+}
+
+function clearStoredAuth() {
+  writeStoredJSON(SESSION_KEY, null);
+  writeStoredJSON(CURRENT_USER_KEY, null);
+}
+
+function normalizeUserFromAuth(authUser, profile = {}, fallbackEmail = "") {
+  const email = profile.email || authUser?.email || fallbackEmail || "";
+  const metadata = authUser?.user_metadata || {};
+  const fullName =
+    profile.nombre ||
+    profile.full_name ||
+    metadata.full_name ||
+    metadata.nombre ||
+    metadata.name ||
+    email.split("@")[0] ||
+    "Usuario";
+
+  const role =
+    profile.user_rol ||
+    profile.rol ||
+    metadata.user_rol ||
+    metadata.rol ||
+    metadata.role ||
+    "finanzas";
+
+  return {
+    id: profile.id || authUser?.id || email,
+    nombre: fullName,
+    usuario: profile.usuario || metadata.usuario || email.split("@")[0] || email,
+    email,
+    user_rol: role,
+    rol: role,
+    estado: profile.estado || metadata.estado || "activo",
+    last_sign_in_at:
+      profile.last_sign_in_at || authUser?.last_sign_in_at || null,
+    created_at: profile.created_at || authUser?.created_at || null,
+    updated_at: profile.updated_at || authUser?.updated_at || null,
+    rawProfile: profile,
+    rawAuthUser: authUser,
+  };
+}
+
+function normalizeUsersList(rows = [], currentUser = null) {
+  const mapped = rows.map((row) => {
+    const role = row.user_rol || row.rol || row.role || "finanzas";
+    const email = row.email || row.usuario || "";
+    return {
+      ...row,
+      nombre:
+        row.nombre ||
+        row.full_name ||
+        row.user_metadata?.full_name ||
+        email.split("@")[0] ||
+        "Usuario",
+      usuario:
+        row.usuario ||
+        row.username ||
+        row.email ||
+        email.split("@")[0] ||
+        "",
+      email,
+      user_rol: role,
+      rol: role,
+      estado: row.estado || "activo",
+    };
+  });
+
+  if (
+    currentUser &&
+    !mapped.some((item) => String(item.id) === String(currentUser.id))
+  ) {
+    mapped.unshift(currentUser);
+  }
+
+  return mapped;
+}
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [users, setUsers] = useState([]); // This will hold all users for the admin view
+  const [users, setUsers] = useState([]);
+  const [authSession, setAuthSession] = useState(null);
+
+  const hydrateCurrentUser = async (authUser, fallbackSession) => {
+    if (!authUser) {
+      setCurrentUser(null);
+      setUsers([]);
+      setAuthSession(null);
+      clearStoredAuth();
+      return null;
+    }
+
+    let profile = null;
+    try {
+      const profileResponse = await apiGet(`/users/${authUser.id}/profile`);
+      profile = profileResponse?.data || null;
+    } catch (error) {
+      console.warn("Perfil no disponible, usando datos del auth user:", error);
+    }
+
+    const normalizedUser = normalizeUserFromAuth(
+      authUser,
+      profile || {},
+      authUser?.email || ""
+    );
+
+    setCurrentUser(normalizedUser);
+    setAuthSession(fallbackSession || null);
+    writeStoredJSON(CURRENT_USER_KEY, normalizedUser);
+    if (fallbackSession) {
+      writeStoredJSON(SESSION_KEY, fallbackSession);
+    }
+
+    try {
+      const detailsResponse = await apiGet("/users/details");
+      const mappedUsers = normalizeUsersList(detailsResponse?.data || [], normalizedUser);
+      setUsers(mappedUsers);
+    } catch (error) {
+      console.warn("No se pudo cargar la lista de usuarios:", error);
+      setUsers([normalizedUser]);
+    }
+
+    return normalizedUser;
+  };
+
+  const restoreSession = async () => {
+    const storedSession = readStoredJSON(SESSION_KEY);
+
+    if (!storedSession?.access_token) {
+      clearStoredAuth();
+      setCurrentUser(null);
+      setUsers([]);
+      setAuthSession(null);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const meResponse = await apiPost("/auth/me", {
+        accessToken: storedSession.access_token,
+      });
+      const authUser = meResponse?.data?.user || meResponse?.data || null;
+
+      if (!authUser) {
+        throw new Error("Sesión inválida");
+      }
+
+      await hydrateCurrentUser(authUser, storedSession);
+    } catch (error) {
+      console.warn("No se pudo restaurar la sesión:", error);
+      clearStoredAuth();
+      setCurrentUser(null);
+      setUsers([]);
+      setAuthSession(null);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // Safety timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
-      console.warn("⚠️ Auth setup timed out, forcing loading to false");
-      setLoading(false);
-    }, 15000); // 15 seconds timeout (aumentado de 5s)
+    let active = true;
 
-    const setupAuth = async () => {
-      console.log("🔄 Iniciando configuración de autenticación...");
-      console.log("🔗 Supabase conectado:", !!supabase);
-      console.log("🚀 MODO SUPABASE ACTIVADO");
-
-      try {
-        // MODO SUPABASE ACTIVADO
-        if (supabase) {
-          // MODO SUPABASE - Verificar sesión inicial
-          console.log("📡 Verificando sesión inicial...");
-          const {
-            data: { session },
-            error: sessionError,
-          } = await supabase.auth.getSession();
-
-          if (sessionError) {
-            console.error("❌ Error obteniendo sesión:", sessionError);
-            throw sessionError;
-          }
-
-          if (session?.user) {
-            console.log("👤 Usuario encontrado en sesión:", session.user.email);
-            await handleUserSession(session);
-          } else {
-            console.log("🚫 No hay sesión activa");
-            setCurrentUser(null);
-            setUsers([]);
-          }
-
-          // Configurar listener para cambios de autenticación
-          const {
-            data: { subscription },
-          } = supabase.auth.onAuthStateChange(async (event, session) => {
-            console.log(
-              "🔄 Cambio de autenticación:",
-              event,
-              session?.user?.email
-            );
-            if (session?.user) {
-              await handleUserSession(session);
-            } else {
-              setCurrentUser(null);
-              setUsers([]);
-            }
-          });
-
-          setLoading(false);
-          clearTimeout(timeoutId); // Limpiar timeout cuando termine exitosamente
-          return () => subscription?.unsubscribe();
-        } else {
-          // MODO SIMULADO (FALLBACK)
-          console.log("🎭 Iniciando en modo simulado...");
-          try {
-            const storedUser = localStorage.getItem("currentUser");
-            if (storedUser) {
-              const parsedUser = JSON.parse(storedUser);
-              console.log(
-                "👤 Usuario cargado desde localStorage:",
-                parsedUser.nombre
-              );
-              setCurrentUser(parsedUser);
-            } else {
-              console.log("🆕 No hay usuario guardado, usando datos iniciales");
-            }
-            setUsers(initialUsers);
-          } catch (e) {
-            console.error("❌ Error al leer el usuario de localStorage", e);
-            localStorage.removeItem("currentUser");
-            setUsers(initialUsers);
-          }
-          setLoading(false);
-          clearTimeout(timeoutId); // Limpiar timeout cuando termine exitosamente
-        }
-      } catch (error) {
-        console.error("💥 Error crítico en setupAuth:", error);
-        // Fallback a modo simulado en caso de error
-        console.log("🔄 Fallback a modo simulado por error...");
-        setUsers(initialUsers);
-        setLoading(false);
-        clearTimeout(timeoutId); // Limpiar timeout cuando termine con error
-      }
+    const run = async () => {
+      if (!active) return;
+      await restoreSession();
     };
 
-    // Función auxiliar para manejar sesiones de usuario
-    const handleUserSession = async (session) => {
-      try {
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", session.user.id)
-          .single();
+    run();
 
-        if (profileError) {
-          console.error("❌ Error obteniendo perfil:", profileError.message);
-          // En lugar de cerrar sesión, crear perfil por defecto
-          const defaultProfile = {
-            id: session.user.id,
-            nombre:
-              session.user.user_metadata?.full_name ||
-              session.user.email?.split("@")[0] ||
-              "Usuario",
-            usuario: session.user.email,
-            user_rol: "finanzas",
-            estado: "activo",
-          };
-          console.log("🔧 Usando perfil por defecto:", defaultProfile.nombre);
-          setCurrentUser({ ...session.user, ...defaultProfile });
-          setUsers([]);
-        } else {
-          console.log("✅ Perfil cargado correctamente:", profile.nombre);
-
-          // Map DB 'rol' to 'user_rol' which the app expects
-          const profileWithRole = {
-            ...profile,
-            user_rol: profile.user_rol || profile.rol
-          };
-
-          const fullUser = { ...session.user, ...profileWithRole };
-          setCurrentUser(fullUser);
-
-          if (fullUser.user_rol === "admin") {
-            console.log("👑 Usuario admin, cargando lista de usuarios...");
-            const { data: allUsersData, error: usersError } =
-              await supabase.rpc("get_all_users_with_details");
-            if (usersError) {
-              console.error("❌ Error cargando usuarios:", usersError.message);
-              setUsers([]);
-            } else {
-              console.log("✅ Usuarios cargados:", allUsersData?.length || 0);
-              setUsers(allUsersData || []);
-            }
-          } else {
-            console.log("ℹ️ Usuario con rol:", fullUser.user_rol, "- No cargando lista de usuarios");
-            setUsers([]);
-          }
-        }
-      } catch (error) {
-        console.error("💥 Error en handleUserSession:", error);
-        setCurrentUser(null);
-        setUsers([]);
-      }
+    return () => {
+      active = false;
     };
-
-    setupAuth();
-
-    return () => clearTimeout(timeoutId);
   }, []);
 
   const login = async (email, password) => {
-    console.log("🔐 Intento de login:", email);
+    try {
+      const response = await apiPost("/auth/login", { email, password });
+      const session = response?.data?.session || null;
+      const authUser = response?.data?.user || null;
 
-    if (supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        console.error("❌ Error de login:", error.message);
-        return { data: null, error };
+      if (!session || !authUser) {
+        throw new Error("No se pudo iniciar sesión");
       }
 
-      console.log("✅ Login exitoso:", data.user.email);
-      return { data, error: null };
-    } else {
-      // Modo simulado
-      const user = initialUsers.find(
-        (u) =>
-          (u.usuario === email || u.email === email) && u.password === password
-      );
-
-      if (user) {
-        console.log("✅ Login exitoso (simulado):", user.nombre);
-        setCurrentUser(user);
-        localStorage.setItem("currentUser", JSON.stringify(user));
-        return { data: { user }, error: null };
-      } else {
-        const userExists = initialUsers.find(
-          (u) => u.usuario === email || u.email === email
-        );
-        const errorMsg = userExists
-          ? "Contraseña incorrecta."
-          : "Usuario no encontrado.";
-        console.log("❌ Login fallido:", errorMsg);
-        return { data: null, error: { message: errorMsg } };
-      }
+      clearStoredAuth();
+      await hydrateCurrentUser(authUser, session);
+      return { data: { user: authUser, session }, error: null };
+    } catch (error) {
+      return { data: null, error: { message: error.message } };
     }
   };
 
   const logout = async () => {
-    console.log("🚪 Cerrando sesión...");
-
-    if (supabase) {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error("❌ Error al cerrar sesión:", error.message);
-      }
-    } else {
+    try {
+      await apiPost("/auth/logout", {});
+    } catch (error) {
+      console.warn("Logout backend falló:", error);
+    } finally {
+      clearStoredAuth();
       setCurrentUser(null);
-      localStorage.removeItem("currentUser");
+      setUsers([]);
+      setAuthSession(null);
     }
   };
 
   const register = async (fullName, email, password) => {
-    console.log("📝 Intento de registro:", fullName, email);
-
-    if (supabase) {
-      const { data, error } = await supabase.auth.signUp({
+    try {
+      const response = await apiPost("/auth/register", {
+        fullName,
         email,
         password,
-        options: {
-          data: {
-            full_name: fullName,
-          },
-        },
       });
 
-      if (error) {
-        console.error("❌ Error de registro:", error.message);
-        return { data: null, error };
-      }
-
-      console.log("✅ Registro exitoso:", data.user?.email);
-      return { data, error: null };
-    } else {
-      // Modo simulado
-      const existingUser = users.find(
-        (u) => u.usuario === email.split("@")[0] || u.email === email
-      );
-      if (existingUser) {
-        return {
-          data: null,
-          error: { message: "El usuario o correo electrónico ya existe." },
-        };
-      }
-
-      console.log("✅ Registro simulado exitoso");
-      return { data: { user: {} }, error: null };
+      return { data: response?.data || null, error: null };
+    } catch (error) {
+      return { data: null, error: { message: error.message } };
     }
   };
 
   const updateUserProfile = async (userId, updates) => {
-    console.log("🔄 Actualizando perfil:", userId, updates);
+    try {
+      const response = await apiPut(`/users/${userId}/profile`, updates);
+      const updatedProfile = response?.data || null;
 
-    if (supabase) {
-      const { error } = await supabase
-        .from("profiles")
-        .update(updates)
-        .eq("id", userId);
-
-      if (error) {
-        console.error("❌ Error actualizando perfil:", error.message);
-        return { error };
+      if (!updatedProfile) {
+        throw new Error("No se recibió el perfil actualizado");
       }
 
-      console.log("✅ Perfil actualizado exitosamente");
-
-      // Actualizar la lista de usuarios si es admin
-      if (currentUser?.user_rol === "admin") {
-        const { data: allUsersData } = await supabase.rpc("get_all_users_with_details");
-        if (allUsersData) {
-          setUsers(allUsersData);
-        }
-      }
-
-      return { error: null };
-    } else {
-      // Modo simulado
-      const updatedMockUsers = users.map((u) =>
-        u.id === userId ? { ...u, ...updates } : u
+      const mergedUser = normalizeUserFromAuth(
+        currentUser?.rawAuthUser || null,
+        { ...currentUser?.rawProfile, ...updatedProfile },
+        currentUser?.email || ""
       );
-      setUsers(updatedMockUsers);
-      return { error: null };
+
+      setUsers((prev) =>
+        normalizeUsersList(
+          prev.map((user) =>
+            String(user.id) === String(userId)
+              ? { ...user, ...updatedProfile, ...mergedUser }
+              : user
+          ),
+          mergedUser
+        )
+      );
+
+      if (String(currentUser?.id) === String(userId)) {
+        setCurrentUser(mergedUser);
+        writeStoredJSON(CURRENT_USER_KEY, mergedUser);
+      }
+
+      return updatedProfile;
+    } catch (error) {
+      console.error("Error actualizando perfil:", error);
+      throw error;
     }
   };
+
+  const refreshUsers = useCallback(async () => {
+    try {
+      const response = await apiGet("/users/details");
+      const mappedUsers = normalizeUsersList(response?.data || [], currentUser);
+      setUsers(mappedUsers);
+      return mappedUsers;
+    } catch (error) {
+      console.warn("No se pudo refrescar la lista de usuarios:", error);
+      return [];
+    }
+  }, [currentUser]);
 
   const value = {
     currentUser,
@@ -300,14 +306,9 @@ export const AuthProvider = ({ children }) => {
     register,
     users,
     updateUserProfile,
+    refreshUsers,
+    authSession,
   };
-
-  console.log(
-    "🎭 AuthContext renderizando. Loading:",
-    loading,
-    "CurrentUser:",
-    currentUser?.nombre
-  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Building2, Plus, Loader2, Phone } from 'lucide-react';
-import { supabase } from '../supabaseClient.js';
 import { AuthContext } from '../contexts/AuthContext.jsx';
+import { apiGet } from '../services/backendApi.js';
 import ToggleSwitch from './ToggleSwitch';
 import AddPersonModal from './AddPersonModal.jsx';
 
@@ -13,35 +13,29 @@ const SucursalDetailModal = ({ sucursal, onClose, onAddPersonal, onRemovePersona
   const [personal, setPersonal] = useState([]);
   const [loadingPersonal, setLoadingPersonal] = useState(true);
 
-  const isSupabaseConnected = supabase && currentUser;
+  const isBackendConnected = !!currentUser;
 
   const fetchPersonal = async () => {
-    if (!isSupabaseConnected || !sucursal) {
+    if (!isBackendConnected || !sucursal) {
         setPersonal(sucursal?.personal || []);
         setLoadingPersonal(false);
         return;
     };
     
     setLoadingPersonal(true);
-    const { data, error } = await supabase
-      .from('sucursal_personal')
-      .select('id, nombre, telefono_origen, estado, empresa')
-      .eq('sucursal_id', sucursal.id)
-      .order('nombre', { ascending: true });
-
-    if (error) {
+    try {
+      const response = await apiGet('/dashboard/bootstrap');
+      const personalData = (response.personal || []).filter((p) => p.sucursal_id === sucursal.id);
+      setPersonal(personalData);
+    } catch (error) {
       console.error("Error fetching personal:", error);
-      setLoadingPersonal(false);
-      return;
     }
-
-    setPersonal(data);
     setLoadingPersonal(false);
   };
 
   useEffect(() => {
     fetchPersonal();
-  }, [sucursal, isSupabaseConnected]);
+  }, [sucursal, isBackendConnected]);
 
   const handleTogglePersonaStatus = (personaId, currentStatus) => {
     const newStatus = currentStatus === 'activo' ? 'inactivo' : 'activo';
@@ -95,7 +89,7 @@ const SucursalDetailModal = ({ sucursal, onClose, onAddPersonal, onRemovePersona
               <h3 className="font-semibold text-gray-800">Personal Asociado</h3>
               <button 
                 onClick={() => setIsAddPersonModalOpen(true)}
-                disabled={!isSupabaseConnected}
+                disabled={!isBackendConnected}
                 className="flex items-center space-x-2 bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg hover:bg-blue-200 transition-colors text-xs font-medium disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"
               >
                 <Plus size={10} />
@@ -156,7 +150,7 @@ const SucursalDetailModal = ({ sucursal, onClose, onAddPersonal, onRemovePersona
                 </tbody>
               </table>
             </div>
-             {!isSupabaseConnected && <p className="text-center text-sm text-gray-500 mt-4">La gestión de personal está desactivada en modo simulado.</p>}
+             {!isBackendConnected && <p className="text-center text-sm text-gray-500 mt-4">La gestión de personal está desactivada en modo simulado.</p>}
           </div>
 
           <div className="p-4 border-t border-gray-200 bg-gray-50/50 rounded-b-xl flex justify-end">

@@ -160,11 +160,6 @@ const AuthPage = () => {
       return;
     }
     setIsLoading(true);
-    // Esta es una llamada real a Supabase si está configurado
-    // const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail);
-    // if (error) setError(error.message);
-    // else setMessage('Si existe una cuenta, se ha enviado un enlace de recuperación.');
-
     // Simulación por ahora
     await new Promise((resolve) => setTimeout(resolve, 1000));
     setMessage(

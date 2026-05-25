@@ -59,6 +59,7 @@ const KanbanView = ({
   onFetchDepositsByDate,
   onFetchAllDeposits,
   onSelectedDateChange,
+  onSelectDate,
   empresas,
   bancos,
   cuentas,
@@ -101,8 +102,9 @@ const KanbanView = ({
       specificDate,
     });
 
-    if (!onFetchDepositsByDate) {
-      console.log("⚠️ KANBAN: onFetchDepositsByDate no está disponible");
+    const loadDate = onSelectDate || onFetchDepositsByDate;
+    if (!loadDate) {
+      console.log("⚠️ KANBAN: no hay handler para cargar depósitos por fecha");
       return;
     }
 
@@ -111,16 +113,18 @@ const KanbanView = ({
         "🔄 KANBAN: Solicitando depósitos para fecha específica:",
         specificDate,
       );
-      onFetchDepositsByDate(specificDate);
+      loadDate(specificDate);
     } else if (filterDateOption === "today") {
       const today = toLocalISOString(new Date());
       console.log("🔄 KANBAN: Solicitando depósitos para hoy:", today);
-      onFetchDepositsByDate(today);
+      loadDate(today);
     } else if (filterDateOption === "all") {
       console.log(
         "🔄 KANBAN: Opción 'Cualquier fecha' seleccionada - cargando TODOS los depósitos",
       );
-      if (onFetchAllDeposits) {
+      if (onSelectDate) {
+        onSelectDate(null);
+      } else if (onFetchAllDeposits) {
         onFetchAllDeposits();
       } else {
         console.warn("⚠️ KANBAN: onFetchAllDeposits no está disponible");
@@ -136,6 +140,7 @@ const KanbanView = ({
   }, [
     specificDate,
     filterDateOption,
+    onSelectDate,
     onFetchDepositsByDate,
     onFetchAllDeposits,
   ]);
@@ -587,6 +592,9 @@ const KanbanView = ({
                       !!onFetchDepositsByDate,
                     );
                     setSpecificDate(newDate);
+                    if (onSelectDate) {
+                      onSelectDate(newDate || null);
+                    }
                   }}
                   className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
                 />

@@ -1,7 +1,12 @@
-import express from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import {
+  registerDashboardApiRoutes,
+  registerRequestLogger,
+  registerDepositSseRoute,
+  startDepositRealtimeHub,
+} from "./backend/realtimeHub.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,26 +14,21 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware de proxy para Chatwoot API
-app.use('/chatwoot-api', createProxyMiddleware({
-  target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
-  changeOrigin: true,
-  pathRewrite: {
-    '^/chatwoot-api': '', // Remover /chatwoot-api del path
-  },
-  secure: true,
-  logLevel: 'debug', // Para debugging
-}));
+app.use(express.json({ limit: "10mb" }));
+registerRequestLogger(app);
+startDepositRealtimeHub();
+registerDashboardApiRoutes(app);
+registerDepositSseRoute(app);
 
 // Servir archivos estáticos del build
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, "dist")));
 
 // Manejar rutas de React Router (SPA) - usar middleware en lugar de ruta
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor corriendo en http://0.0.0.0:${PORT}`);
-  console.log(`🔗 Proxy Chatwoot: /chatwoot-api -> https://chatwoot-chatwoot.gnfcio.easypanel.host`);
+  console.log(`🔴 SSE depositos: /api/events/depositos`);
 });

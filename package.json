@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:3000": "vite --port 3000",
+    "dev:frontend": "vite --port 5173",
+    "dev:backend": "node server.js",
+    "dev:all": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "node server.js",
@@ -15,6 +17,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
+    "archiver": "^8.0.0",
     "express": "^5.2.1",
     "framer-motion": "^12.5.0",
     "gapi-script": "^1.2.0",

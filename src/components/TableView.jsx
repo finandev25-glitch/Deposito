@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as XLSX from "xlsx";
-import JSZip from "jszip";
 import DepositDetailModal from "./DepositDetailModal";
+import { apiBlob } from "../services/backendApi";
 import {
   Search,
   Filter,
@@ -13,7 +13,6 @@ import {
   AlertCircle,
   Calendar,
   Loader2,
-  Archive,
   Edit,
   Eye,
 } from "lucide-react";
@@ -24,6 +23,7 @@ const TableView = ({
   onFetchDepositsByDate,
   onFetchDepositsByPeriod,
   onSelectedDateChange,
+  onSelectDate,
   empresas,
   bancos,
   cuentas,
@@ -47,6 +47,7 @@ const TableView = ({
   const [selectedDeposit, setSelectedDeposit] = useState(null);
   const [modalEditMode, setModalEditMode] = useState("full"); // 'full' or 'fields-only'
   const [isExporting, setIsExporting] = useState(false);
+  const [exportJob, setExportJob] = useState(null);
 
   const formatDate = (isoString) => {
     if (!isoString) return "-";
@@ -205,105 +206,85 @@ const TableView = ({
     if (isExporting || filteredDeposits.length === 0) {
       alert(
         isExporting
-          ? "Ya hay una exportación en curso."
-          : "No hay depósitos para exportar."
+          ? "Ya hay una exportaci?n en curso."
+          : "No hay dep?sitos para exportar."
       );
       return;
     }
+
+    const voucherCount = filteredDeposits.filter((deposit) => deposit.imagen_voucher).length;
+
+    if (voucherCount === 0) {
+      alert("No hay vouchers v?lidos para exportar.");
+      return;
+    }
+
     setIsExporting(true);
-    alert(`Iniciando la descarga de vouchers. Esto puede tardar...`);
+    setExportJob({
+      jobId: null,
+      status: "processing",
+      progress: 0,
+      total: voucherCount,
+      processed: 0,
+      filesAdded: 0,
+      failures: [],
+      error: null,
+      message: "Preparando exportaci?n...",
+    });
 
     try {
-      const zip = new JSZip();
-      const imagePromises = filteredDeposits.map(async (deposit) => {
-        if (!deposit.imagen_voucher) return null;
+      setExportJob((prev) => ({
+        ...(prev || {}),
+        progress: 15,
+        message: "Solicitando exportaci?n al backend...",
+      }));
 
-        let downloadUrl = deposit.imagen_voucher;
-
-        if (downloadUrl.includes("drive.google.com/file/d/")) {
-          const fileIdMatch = downloadUrl.match(/file\/d\/([a-zA-Z0-9_-]+)/);
-          if (fileIdMatch && fileIdMatch[1]) {
-            const fileId = fileIdMatch[1];
-            const googleDriveDirectUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-            downloadUrl = `https://img-wrapper.vercel.app/image?url=${encodeURIComponent(
-              googleDriveDirectUrl
-            )}`;
-          }
-        }
-
-        try {
-          const response = await fetch(downloadUrl);
-          if (!response.ok)
-            throw new Error(`HTTP error! status: ${response.status}`);
-          return { deposit, blob: await response.blob() };
-        } catch (error) {
-          console.error(
-            `Error descargando voucher para op ${deposit.numero_operacion}:`,
-            error
-          );
-          return null;
-        }
+      const zipBlob = await apiBlob("/documents/vouchers/export-filtered", {
+        method: "POST",
+        body: {
+          filterPeriod,
+          selectedMonth,
+          specificDate,
+          searchTerm,
+          filterStatus,
+        },
       });
 
-      const results = await Promise.all(imagePromises);
-      let filesAdded = 0;
-      results.filter(Boolean).forEach(({ deposit, blob }) => {
-        // Formatear fecha sin problemas de zona horaria
-        const formatearFechaParaArchivo = (fechaString) => {
-          if (!fechaString) return "sin-fecha";
-          try {
-            const [year, month, day] = fechaString.split("T")[0].split("-");
-            return `${year}-${month}-${day}`;
-          } catch {
-            return "sin-fecha";
-          }
-        };
-
-        const formattedDate = formatearFechaParaArchivo(
-          deposit.fecha_registro || deposit.fecha_deposito
-        );
-        const sucursalFolder =
-          deposit.sucursal?.nombre.replace(/[\/\\?%*:|"<>]/g, "_") ||
-          "sin-sucursal";
-
-        let extension = "file";
-        if (blob.type.startsWith("image/")) {
-          extension = blob.type.split("/")[1].split("+")[0];
-        } else if (blob.type === "application/pdf") {
-          extension = "pdf";
-        } else {
-          const urlExtMatch = deposit.imagen_voucher.match(
-            /\.([a-zA-Z0-9]+)(?:[?#]|$)/
-          );
-          if (urlExtMatch && urlExtMatch[1]) {
-            extension = urlExtMatch[1];
-          }
-        }
-        extension = extension.toLowerCase().replace("jpeg", "jpg");
-
-        const filename = `op_${deposit.numero_operacion}_id_${deposit.id}.${extension}`;
-        zip.file(`${formattedDate}/${sucursalFolder}/${filename}`, blob);
-        filesAdded++;
-      });
-
-      if (filesAdded === 0) {
-        alert(
-          "No se pudo descargar ningún voucher. Revisa la consola para más detalles."
-        );
-        return;
+      if (!zipBlob || zipBlob.size === 0) {
+        throw new Error("El backend devolvi? un archivo vac?o.");
       }
 
-      const content = await zip.generateAsync({ type: "blob" });
+      setExportJob((prev) => ({
+        ...(prev || {}),
+        progress: 90,
+        message: "Descarga lista, iniciando archivo...",
+      }));
+
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(content);
+      const objectUrl = URL.createObjectURL(zipBlob);
+      link.href = objectUrl;
       link.download = "vouchers_depositos.zip";
+      link.style.display = "none";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(link.href);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+      setExportJob((prev) => ({
+        ...(prev || {}),
+        status: "completed",
+        progress: 100,
+        message: "Descarga completada",
+      }));
     } catch (error) {
-      console.error("Error al generar ZIP:", error);
-      alert("Ocurrió un error al generar el archivo ZIP.");
+      console.error("Error al exportar vouchers desde backend:", error);
+      setExportJob((prev) => ({
+        ...(prev || {}),
+        status: "error",
+        error: error.message,
+        message: error.message || "Ocurri? un error al exportar los vouchers.",
+      }));
+      alert(error.message || "Ocurri? un error al exportar los vouchers.");
     } finally {
       setIsExporting(false);
     }
@@ -387,23 +368,6 @@ const TableView = ({
               >
                 <Download size={14} />
                 <span>Exportar Excel</span>
-              </button>
-              <button
-                onClick={handleExportVouchers}
-                disabled={isExporting}
-                className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-blue-400"
-              >
-                {isExporting ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Descargando...</span>
-                  </>
-                ) : (
-                  <>
-                    <Archive size={14} />
-                    <span>Exportar Vouchers</span>
-                  </>
-                )}
               </button>
             </div>
           </div>
@@ -493,14 +457,21 @@ const TableView = ({
                   setSpecificDate(newDate);
 
                   // Comunicar el cambio de fecha a App.jsx
-                  if (newDate && onFetchDepositsByDate) {
+                  if (onSelectDate) {
                     console.log(
-                      "📅 TABLE: Solicitando depósitos por fecha a App.jsx"
+                      "📅 TABLE: Solicitando depósitos por fecha al backend hook"
                     );
-                    onFetchDepositsByDate(newDate);
-                  }
-                  if (newDate && onSelectedDateChange) {
-                    onSelectedDateChange(newDate);
+                    onSelectDate(newDate || null);
+                  } else {
+                    if (newDate && onFetchDepositsByDate) {
+                      console.log(
+                        "📅 TABLE: Solicitando depósitos por fecha a App.jsx"
+                      );
+                      onFetchDepositsByDate(newDate);
+                    }
+                    if (newDate && onSelectedDateChange) {
+                      onSelectedDateChange(newDate);
+                    }
                   }
 
                   // Resetear el filtro de período cuando se selecciona una fecha específica
@@ -519,10 +490,12 @@ const TableView = ({
                     console.log(
                       "🧹 TABLE: Limpiando filtros - cargando todos los depósitos"
                     );
-                    if (onFetchDepositsByPeriod) {
+                    if (onSelectDate) {
+                      onSelectDate(null);
+                    } else if (onFetchDepositsByPeriod) {
                       onFetchDepositsByPeriod("all");
                     }
-                    if (onSelectedDateChange) {
+                    if (!onSelectDate && onSelectedDateChange) {
                       onSelectedDateChange(null);
                     }
                   }}
@@ -562,8 +535,8 @@ const TableView = ({
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Estado
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Motivo Rechazo
+                  <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider w-20 max-w-20">
+                    Motivo
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Validado por
@@ -633,7 +606,7 @@ const TableView = ({
                       {getStatusBadge(deposit.estado)}
                     </td>
                     <td
-                      className="px-6 py-4 text-sm text-red-600 dark:text-red-400 max-w-xs truncate"
+                      className="px-2 py-4 text-xs text-red-600 dark:text-red-400 w-20 max-w-20 truncate align-top"
                       title={
                         deposit.estado === "rechazado"
                           ? deposit.motivo_rechazo
@@ -728,6 +701,53 @@ const TableView = ({
           </div>
         </div>
       </div>
+      <AnimatePresence>
+        {exportJob && isExporting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 10 }}
+              className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-2xl border border-gray-200 dark:border-gray-800"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  Exportando vouchers
+                </h3>
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {Math.min(100, Math.max(0, Math.round(exportJob.progress || 0)))}%
+                </span>
+              </div>
+
+              <div className="h-3 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${Math.min(100, Math.max(0, exportJob.progress || 0))}%` }}
+                />
+              </div>
+
+              <div className="mt-4 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+                <p>{exportJob.message || "Preparando exportación..."}</p>
+                <p>
+                  Procesados: {exportJob.processed || 0} / {exportJob.total || 0}
+                </p>
+                <p>Archivos incluidos: {exportJob.filesAdded || 0}</p>
+                {Array.isArray(exportJob.failures) && exportJob.failures.length > 0 && (
+                  <p className="text-amber-600 dark:text-amber-400">
+                    Fallas parciales: {exportJob.failures.length}
+                  </p>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {selectedDeposit && (
           <DepositDetailModal

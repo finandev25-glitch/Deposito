@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { supabase } from "../supabaseClient.js";
 import yCloudService from "../services/yCloudService.js";
+import { apiDelete, apiGet, apiPost, apiPut } from "../services/backendApi.js";
 import {
   MessageSquare,
   Save,
@@ -51,37 +51,16 @@ const ConfiguracionYCloud = () => {
   const cargarConfiguraciones = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("ycloud_config")
-        .select("*")
-        .order("activo", { ascending: false })
-        .order("creado_en", { ascending: false });
+      const response = await apiGet("/ycloud/configs");
+      const data = response.data || [];
+      setConfigs(data);
 
-      if (error) {
-        console.error("Error cargando configuraciones YCloud:", error);
-
-        if (error.code === "PGRST205" || error.code === "42P01") {
-          setError(
-            "La tabla 'ycloud_config' no existe en la base de datos. Por favor ejecuta la migracion desde el archivo de migraciones SQL."
-          );
-        }
-
-        return;
-      }
-
-      setConfigs(data || []);
-
-      if (data && data.length > 0) {
-        console.log(
-          "Configuraciones YCloud cargadas exitosamente:",
-          data.length
-        );
+      if (data.length > 0) {
+        console.log("Configuraciones YCloud cargadas exitosamente:", data.length);
       }
     } catch (error) {
       console.error("Error en cargarConfiguraciones:", error);
-      setError(
-        "Error al cargar las configuraciones. Por favor, intenta de nuevo."
-      );
+      setError("Error al cargar las configuraciones. Por favor, intenta de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -128,42 +107,26 @@ const ConfiguracionYCloud = () => {
     setTestResult(null);
 
     try {
-      // Probar conexion con YCloud API verificando el balance
-      const response = await fetch("https://api.ycloud.com/v2/balance", {
-        method: "GET",
-        headers: {
-          "X-API-Key": config.api_key,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
+      const response = await apiPost("/ycloud/test-connection", {
+        configId: config.id,
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      if (response.success) {
+        const data = response.data || {};
         setTestResult({
           success: true,
-          message: `Conexion exitosa con YCloud. Balance: ${data.amount} ${data.currency}`,
+          message: response.message || `Conexion exitosa con YCloud. Balance: ${data.amount} ${data.currency}`,
         });
       } else {
-        const errorData = await response.json();
         setTestResult({
           success: false,
-          message: `Error ${response.status}: ${
-            errorData.error?.message || response.statusText
-          }`,
+          message: response.error || "No se pudo validar la conexion",
         });
       }
     } catch (error) {
-      let errorMessage = `Error de conexion: ${error.message}`;
-
-      if (error.message.includes("CORS") || error.message.includes("fetch")) {
-        errorMessage +=
-          "\n\nNota: Este error puede ser debido a restricciones CORS. El envio de mensajes puede funcionar correctamente via Edge Function.";
-      }
-
       setTestResult({
         success: false,
-        message: errorMessage,
+        message: `Error de conexion: ${error.message}`,
       });
     } finally {
       setTestingConnection(null);
@@ -223,13 +186,6 @@ Ejemplo: +521234567890`
     try {
       setSaving(true);
 
-      if (formData.activo && !editingConfig) {
-        await supabase
-          .from("ycloud_config")
-          .update({ activo: false })
-          .eq("activo", true);
-      }
-
       const configData = {
         alias: formData.alias.trim(),
         descripcion: formData.descripcion?.trim() || null,
@@ -242,20 +198,13 @@ Ejemplo: +521234567890`
 
       let result;
       if (editingConfig) {
-        result = await supabase
-          .from("ycloud_config")
-          .update(configData)
-          .eq("id", editingConfig.id)
-          .select();
+        result = await apiPut(`/ycloud/configs/${editingConfig.id}`, configData);
       } else {
-        result = await supabase
-          .from("ycloud_config")
-          .insert(configData)
-          .select();
+        result = await apiPost("/ycloud/configs", configData);
       }
 
       if (result.error) {
-        throw result.error;
+        throw new Error(result.error);
       }
 
       await cargarConfiguraciones();
@@ -282,12 +231,7 @@ Ejemplo: +521234567890`
     }
 
     try {
-      const { error } = await supabase
-        .from("ycloud_config")
-        .delete()
-        .eq("id", config.id);
-
-      if (error) throw error;
+      await apiDelete(`/ycloud/configs/${config.id}`);
 
       await cargarConfiguraciones();
       console.log("Configuracion eliminada");

@@ -1,0 +1,85 @@
+{
+  "jobs": [
+    {
+      "id": "1779562093722-r8sim22g",
+      "status": "processing",
+      "progress": 1,
+      "total": 0,
+      "processed": 0,
+      "filesAdded": 0,
+      "failures": [],
+      "error": null,
+      "filters": {
+        "ids": [],
+        "exportMode": "date",
+        "specificDate": "2026-05-12",
+        "filterPeriod": "all",
+        "selectedMonth": null,
+        "searchTerm": "",
+        "filterStatus": "all"
+      },
+      "createdAt": "2026-05-23T18:48:13.722Z",
+      "updatedAt": "2026-05-23T18:48:14.708Z",
+      "completedAt": null,
+      "zipBucket": "voucher-exports",
+      "zipPath": null,
+      "zipSizeBytes": null,
+      "zipFilename": "vouchers_depositos.zip",
+      "createdBy": "a85fda54-843b-47fc-8b6b-1ddfdc1a40b4"
+    },
+    {
+      "id": "1779562232049-a0jprv23",
+      "status": "processing",
+      "progress": 1,
+      "total": 0,
+      "processed": 0,
+      "filesAdded": 0,
+      "failures": [],
+      "error": null,
+      "filters": {
+        "ids": [],
+        "exportMode": "date",
+        "specificDate": "2026-05-12",
+        "filterPeriod": "all",
+        "selectedMonth": null,
+        "searchTerm": "",
+        "filterStatus": "all"
+      },
+      "createdAt": "2026-05-23T18:50:32.049Z",
+      "updatedAt": "2026-05-23T18:51:13.291Z",
+      "completedAt": null,
+      "zipBucket": "voucher-exports",
+      "zipPath": null,
+      "zipSizeBytes": null,
+      "zipFilename": "vouchers_depositos.zip",
+      "createdBy": "a85fda54-843b-47fc-8b6b-1ddfdc1a40b4"
+    },
+    {
+      "id": "1779562299761-3o8861i5",
+      "status": "processing",
+      "progress": 1,
+      "total": 0,
+      "processed": 0,
+      "filesAdded": 0,
+      "failures": [],
+      "error": null,
+      "filters": {
+        "ids": [],
+        "exportMode": "date",
+        "specificDate": "2026-05-04",
+        "filterPeriod": "all",
+        "selectedMonth": null,
+        "searchTerm": "",
+        "filterStatus": "validado"
+      },
+      "createdAt": "2026-05-23T18:51:39.761Z",
+      "updatedAt": "2026-05-23T18:57:22.044Z",
+      "completedAt": null,
+      "zipBucket": "voucher-exports",
+      "zipPath": null,
+      "zipSizeBytes": null,
+      "zipFilename": "vouchers_depositos.zip",
+      "createdBy": "a85fda54-843b-47fc-8b6b-1ddfdc1a40b4"
+    }
+  ]
+}

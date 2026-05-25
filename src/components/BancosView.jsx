@@ -2,7 +2,6 @@ import React, { useState, useRef, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
 import { AuthContext } from '../contexts/AuthContext.jsx';
-import { supabase } from '../supabaseClient.js';
 import { 
   Plus, Search, Edit, Trash2, TrendingUp, AlertTriangle, Upload
 } from 'lucide-react';
@@ -108,14 +107,19 @@ const BancosView = ({ bancos, empresas, onAddEmpresa, cuentas, onAddCuenta, onUp
         }
 
         if (newCuentasToInsert.length > 0) {
-          if (supabase && currentUser) {
-            const { data: insertedData, error } = await supabase.from('cuentas_bancarias').insert(newCuentasToInsert).select('*, empresa:empresas(id, nombre, estado), banco:bancos(id, abreviatura, estado)');
-            if (error) throw error;
-            onBatchAddCuentas(insertedData);
-          } else {
-            // Mock mode
-            alert("La importación masiva solo está disponible en modo conectado a la base de datos.");
+          const response = await fetch('/api/cuentas-bancarias/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows: newCuentasToInsert }),
+          });
+
+          if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({}));
+            throw new Error(errorBody.error || 'No se pudo importar las cuentas');
           }
+
+          const { data: insertedData } = await response.json();
+          onBatchAddCuentas(insertedData || []);
           
           let alertMessage = `${newCuentasToInsert.length} cuentas han sido importadas correctamente.`;
           if (skippedCount > 0) {
@@ -253,3 +257,4 @@ const BancosView = ({ bancos, empresas, onAddEmpresa, cuentas, onAddCuenta, onUp
 };
 
 export default BancosView;
+

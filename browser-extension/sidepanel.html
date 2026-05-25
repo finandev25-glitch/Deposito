@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voucher Side Panel</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="panel">
+      <section class="summary">
+        <div class="field-row field-row--pair">
+          <div class="field field--half">
+            <span class="label">Banco</span>
+            <span id="banco" class="value">-</span>
+          </div>
+          <div class="field field--half">
+            <span class="label">Sucursal</span>
+            <span id="sucursal" class="value">-</span>
+          </div>
+        </div>
+
+        <div class="field-row field-row--pair">
+          <div class="field field--half">
+            <span class="label">Fecha depósito</span>
+            <span id="fechaDeposito" class="value">-</span>
+          </div>
+          <div class="field field--half">
+            <span class="label label--compact">Nro. operación solicitante</span>
+            <span id="numeroOperacion" class="value">-</span>
+          </div>
+        </div>
+
+        <div class="field-row field-row--money">
+          <div class="field field--importe">
+            <span class="label">Importe</span>
+            <span id="importe" class="value">-</span>
+          </div>
+          <div class="field field--moneda">
+            <span class="label">Moneda</span>
+            <span id="moneda" class="value">-</span>
+          </div>
+          <div class="field field--cliente">
+            <span class="label">Cliente</span>
+            <span id="cliente" class="value">-</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="voucher-card">
+        <div class="voucher-toolbar">
+          <button id="searchOperationButton" class="link-button link-button--secondary" type="button">
+            Buscar nro. operación
+          </button>
+          <button id="searchAmountButton" class="link-button link-button--secondary" type="button">
+            Buscar importe
+          </button>
+          <a id="openLink" class="link-button" href="#" target="_blank" rel="noreferrer">
+            Abrir
+          </a>
+        </div>
+        <div id="searchStatus" class="search-status">Busca por nro. operación o importe en la pestaña activa.</div>
+        <div id="voucherPreview" class="preview empty">
+          <div class="empty-state">Carga un depósito para ver su comprobante.</div>
+        </div>
+      </section>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

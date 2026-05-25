@@ -22,10 +22,10 @@ import {
   File,
   ExternalLink,
 } from "lucide-react";
-import { supabase } from "../supabaseClient";
 import { AuthContext } from "../contexts/AuthContext";
 import { formatDate } from "../utils/dateFormatters";
 import SimpleFileManager from "./SimpleFileManager";
+import { apiDelete, apiGet, apiPost } from "../services/backendApi.js";
 
 const RegularizarDepositos = ({ onDepositUpdated }) => {
   const { currentUser } = useContext(AuthContext);
@@ -135,22 +135,10 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
       setBuscandoTelefono(true);
       try {
-        const { data, error } = await supabase
-          .from("sucursal_personal")
-          .select(
-            `
-            *,
-            sucursal:sucursal_id (id, nombre)
-          `
-          )
-          .or(
-            `telefono_origen.ilike.%${telefonoSearch}%,nombre.ilike.%${telefonoSearch}%`
-          )
-          .order("nombre");
-
-        if (error) throw error;
-
-        setTrabajadoresEncontrados(data || []);
+        const response = await apiGet(
+          `/personal/search?q=${encodeURIComponent(telefonoSearch)}&limit=20`,
+        );
+        setTrabajadoresEncontrados(response.data || []);
       } catch (error) {
         console.error("Error buscando trabajadores:", error);
       } finally {
@@ -164,53 +152,29 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
   const loadCatalogos = async () => {
     try {
-      const [empresasRes, bancosRes, cuentasRes] = await Promise.all([
-        supabase
-          .from("empresas")
-          .select("*")
-          .eq("estado", "activo")
-          .order("nombre"),
-        supabase
-          .from("bancos")
-          .select("*")
-          .eq("estado", "activo")
-          .order("abreviatura"),
-        supabase.from("cuentas_bancarias").select("*").order("anexo"),
-      ]);
+      const response = await fetch('/api/dashboard/bootstrap');
+      if (!response.ok) throw new Error('No se pudieron cargar los catalogos');
+      const data = await response.json();
 
-      setEmpresas(empresasRes.data || []);
-      setBancos(bancosRes.data || []);
-      setCuentas(cuentasRes.data || []);
+      setEmpresas((data.empresas || []).filter((empresa) => empresa.estado === 'activo'));
+      setBancos((data.bancos || []).filter((banco) => banco.estado === 'activo'));
+      setCuentas((data.cuentas || []).sort((a, b) => String(a.anexo || '').localeCompare(String(b.anexo || ''))));
     } catch (error) {
-      console.error("Error cargando catálogos:", error);
-      setMessage({ type: "error", text: "Error cargando catálogos" });
+      console.error('Error cargando cat?logos:', error);
+      setMessage({ type: 'error', text: 'Error cargando cat?logos' });
     }
   };
 
   const loadDepositosRegularizados = async () => {
     setLoadingDepositos(true);
     try {
-      const { data, error } = await supabase
-        .from("depositos")
-        .select(
-          `
-          *,
-          empresa:empresa_id (nombre),
-          banco:banco_id (abreviatura),
-          sucursal:sucursal_id (nombre),
-          trabajador:trabajador_sucursal_id (nombre),
-          validado_por_usuario:validado_por (nombre)
-        `
-        )
-        .ilike("observaciones", "%**registros manual**%")
-        .order("fecha_registro", { ascending: false })
-        .limit(50);
+      const response = await fetch('/api/depositos?regularized=1&limit=50');
+      if (!response.ok) throw new Error('No se pudieron cargar los depositos');
+      const data = await response.json();
 
-      if (error) throw error;
-
-      setDepositosRegularizados(data || []);
+      setDepositosRegularizados(data.data || []);
     } catch (error) {
-      console.error("Error cargando depósitos regularizados:", error);
+      console.error('Error cargando dep?sitos regularizados:', error);
     } finally {
       setLoadingDepositos(false);
     }
@@ -312,13 +276,8 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
         fecha_registro: new Date().toISOString(),
       };
 
-      const { data, error } = await supabase
-        .from("depositos")
-        .insert([depositData])
-        .select()
-        .single();
-
-      if (error) throw error;
+      const response = await apiPost("/depositos", depositData);
+      if (response.error) throw new Error(response.error);
 
       setMessage({
         type: "success",
@@ -346,12 +305,8 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       return;
 
     try {
-      const { error } = await supabase
-        .from("depositos")
-        .delete()
-        .eq("id", depositoId);
-
-      if (error) throw error;
+      const response = await apiDelete(`/depositos/${depositoId}`);
+      if (response.error) throw new Error(response.error);
 
       setMessage({ type: "success", text: "Depósito eliminado" });
       loadDepositosRegularizados();
@@ -448,70 +403,30 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
         checked: true,
         isDuplicate: true,
         message:
-          "El importe, moneda y nro. de operación son necesarios para la comprobación.",
+          "El importe, moneda y número de operación bancaria son necesarios para la comprobación.",
       });
       setIsChecking(false);
       return false;
     }
 
     try {
-      const { data, error } = await supabase
-        .from("depositos")
-        .select(
-          `
-          id,
-          numero_operacion,
-          numero_operacion_banco,
-          monto,
-          moneda,
-          fecha_deposito,
-          fecha_registro,
-          estado,
-          sucursal:sucursal_id(nombre),
-          trabajador:trabajador_sucursal_id(nombre),
-          empresa:empresa_id(nombre),
-          banco:banco_id(nombre, abreviatura)
-        `
-        )
-        .eq("monto", parseFloat(formData.monto))
-        .eq("moneda", formData.moneda)
-        .eq("estado", "validado");
+      const response = await apiPost("/depositos/check-duplicate", {
+        monto: parseFloat(formData.monto),
+        moneda: formData.moneda,
+        numero_operacion_banco: formData.numero_operacion_banco,
+      });
+      const duplicates = response.duplicates || [];
 
-      if (error) {
-        console.error("❌ Error en consulta Supabase:", error);
+      if (response.error) {
+        console.error("❌ Error en consulta backend:", response.error);
         setCheckResult({
           checked: true,
           isDuplicate: true,
-          message: `Error al comprobar: ${error.message}`,
+          message: `Error al comprobar: ${response.error}`,
         });
         setIsChecking(false);
         return false;
       }
-
-      // Verificar duplicados en los resultados
-      const normalizedInputOp = formData.numero_operacion_banco.replace(
-        /^0+/,
-        ""
-      );
-
-      const duplicates = data.filter((d) => {
-        // Verificar por numero_operacion_banco (campo del banco)
-        if (d.numero_operacion_banco) {
-          const normalizedDbOpBanco = d.numero_operacion_banco.replace(
-            /^0+/,
-            ""
-          );
-          if (normalizedDbOpBanco === normalizedInputOp) return true;
-        }
-
-        // Verificar por numero_operacion (campo principal) como fallback
-        if (d.numero_operacion) {
-          const normalizedDbOp = d.numero_operacion.replace(/^0+/, "");
-          if (normalizedDbOp === normalizedInputOp) return true;
-        }
-
-        return false;
-      });
 
       if (duplicates.length > 0) {
         console.log("⚠️  Duplicados encontrados:", duplicates);

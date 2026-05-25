@@ -1,0 +1,217 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  overflow: hidden;
+}
+
+.panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 40%),
+    linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.summary,
+.voucher-card {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  border-radius: 18px;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+}
+
+.field-row {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+
+.field {
+  padding: 4px 7px;
+  border-radius: 9px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.label {
+  display: block;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #64748b;
+  font-weight: 700;
+  margin-bottom: 1px;
+}
+
+.label--compact {
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
+
+.value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.field--half {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.field--importe {
+  min-width: 0;
+  flex: 0 0 26%;
+}
+
+.field--moneda {
+  min-width: 72px;
+  max-width: 92px;
+  flex: 0 0 auto;
+}
+
+.field--cliente {
+  min-width: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+}
+
+.voucher-card {
+  flex: 11.5;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.voucher-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 10px 10px 0;
+  flex-wrap: wrap;
+}
+
+.voucher-toolbar > * {
+  min-width: 0;
+}
+
+.link-button--secondary {
+  background: linear-gradient(135deg, #0f172a, #334155);
+}
+
+.hint {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: white;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 1 1 0;
+}
+
+.search-status {
+  padding: 6px 10px 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.preview {
+  margin: 10px;
+  flex: 1;
+  min-height: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: #ffffff;
+}
+
+.preview.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.empty-state {
+  padding: 14px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.preview iframe,
+.preview img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  object-fit: contain;
+  display: block;
+}
+
+@media (max-width: 420px) {
+  .panel {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .summary {
+    padding: 8px;
+  }
+
+  .voucher-toolbar {
+    padding: 8px 8px 0;
+  }
+
+  .preview {
+    margin: 8px;
+  }
+
+  .preview,
+  .preview iframe,
+  .preview img {
+    min-height: 0;
+  }
+}

@@ -1,8 +1,13 @@
-import express from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import { networkInterfaces } from 'os';
+import {
+  registerDashboardApiRoutes,
+  registerRequestLogger,
+  registerDepositSseRoute,
+  startDepositRealtimeHub,
+} from "./backend/realtimeHub.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,32 +16,19 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // Escuchar en todas las interfaces
 
-// Configurar proxy para Chatwoot
-app.use('/chatwoot-api', createProxyMiddleware({
-  target: 'https://chatwoot-chatwoot.gnfcio.easypanel.host',
-  changeOrigin: true,
-  secure: false,
-  pathRewrite: {
-    '^/chatwoot-api': '', // Remover /chatwoot-api del path
-  },
-  onError: (err, req, res) => {
-    console.error('Proxy error:', err);
-    res.status(500).json({ error: 'Proxy error', message: err.message });
-  },
-  logLevel: 'info'
-}));
+app.use(express.json({ limit: "10mb" }));
+registerRequestLogger(app);
+startDepositRealtimeHub();
+registerDashboardApiRoutes(app);
+registerDepositSseRoute(app);
 
-// Servir archivos estáticos desde el directorio actual (ya estamos en dist)
-app.use(express.static(__dirname));
+// Servir archivos estáticos desde el build
+app.use(express.static(path.join(__dirname, 'dist')));
 
 // SPA fallback - todas las rutas que no sean API devuelven index.html
 app.get('/*', (req, res) => {
   // Si es una ruta de API, no hacer fallback
-  if (req.path.startsWith('/chatwoot-api')) {
-    return res.status(404).json({ error: 'API endpoint not found' });
-  }
-  
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 // Función para obtener las IPs de red local
@@ -70,6 +62,6 @@ app.listen(PORT, HOST, () => {
   }
 
   console.log(`\n📁 Sirviendo archivos desde: ${__dirname}`);
-  console.log(`🔄 Proxy Chatwoot: /chatwoot-api -> https://chatwoot-chatwoot.gnfcio.easypanel.host`);
+  console.log(`🔴 SSE depositos: /api/events/depositos`);
   console.log('\n✨ Presiona Ctrl+C para detener el servidor\n');
 });

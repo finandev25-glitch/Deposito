@@ -6,11 +6,10 @@ import React, {
   useCallback,
 } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { supabase } from "../supabaseClient.js";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import useWhatsApp from "../hooks/useWhatsApp.js";
-import chatwootService from "../services/chatwootService.js";
 import yCloudService from "../services/yCloudService.js";
+import { apiGet, apiPost, apiPut } from "../services/backendApi.js";
 import {
   X,
   User,
@@ -40,8 +39,6 @@ import {
 } from "lucide-react";
 import RejectionModal from "./RejectionModal";
 import GoogleDrivePicker from "./GoogleDrivePicker.jsx";
-import ChatwootConversation from "./ChatwootConversation.jsx";
-import { buildChatwootWebUrl } from "../utils/chatwootConfig";
 
 const getStatusInfo = (estado) => {
   switch (estado) {
@@ -91,6 +88,21 @@ const FormRow = ({ icon: Icon, label, children }) => (
   </div>
 );
 
+const normalizeDateForInput = (value) => {
+  if (!value) return "";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const DepositDetailModal = ({
   deposit,
   onClose,
@@ -130,17 +142,9 @@ const DepositDetailModal = ({
   const [isRejectionModalOpen, setIsRejectionModalOpen] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isFloatingIframeOpen, setIsFloatingIframeOpen] = useState(false);
-  const [showChatwootIframe, setShowChatwootIframe] = useState(false);
-
   // Estado para mostrar tiempo transcurrido
   const [elapsedTime, setElapsedTime] = useState("");
   const [receivedTime, setReceivedTime] = useState("");
-
-  // Estados para Chatwoot
-  const [chatwootConfigId, setChatwootConfigId] = useState("");
-  const [chatwootConversationId, setChatwootConversationId] = useState("");
-  const [isSendingToChatwoot, setIsSendingToChatwoot] = useState(false);
-  const [chatwootConfigs, setChatwootConfigs] = useState([]);
 
   // Estados para configuración de mensajes
   const [yCloudConfigId, setYCloudConfigId] = useState("");
@@ -162,6 +166,15 @@ const DepositDetailModal = ({
     sucursal_nombre: "",
     telefono_origen: "",
   });
+
+  const isTypingTarget = useCallback((target) => {
+    if (!target) return false;
+
+    if (target.isContentEditable) return true;
+
+    const tagName = target.tagName?.toLowerCase();
+    return tagName === "input" || tagName === "textarea" || tagName === "select";
+  }, []);
 
   // Hook de WhatsApp
   const {
@@ -199,45 +212,17 @@ const DepositDetailModal = ({
 
   // Función para buscar trabajadores
   const buscarTrabajadores = async (searchTerm) => {
-    if (!isSupabaseConnected || searchTerm.length < 2) {
+    if (!isBackendConnected || searchTerm.length < 2) {
       setTrabajadoresEncontrados([]);
       return;
     }
 
     setBuscandoTrabajador(true);
     try {
-      const { data, error } = await supabase
-        .from("sucursal_personal")
-        .select(
-          `
-          id,
-          nombre,
-          telefono_origen,
-          empresa,
-          es_responsable,
-          estado,
-          sucursal:sucursal_id (
-            id,
-            nombre,
-            telefono
-          )
-        `,
-        )
-        .eq("estado", "activo")
-        .or(
-          `nombre.ilike.%${searchTerm}%,telefono_origen.ilike.%${searchTerm}%`,
-        )
-        .order("nombre")
-        .limit(10);
-
-      if (error) {
-        console.error("Error buscando trabajadores:", error);
-        return;
-      }
-
-      setTrabajadoresEncontrados(data || []);
+      const response = await apiGet('/personal/search?q=' + encodeURIComponent(searchTerm) + '&limit=10');
+      setTrabajadoresEncontrados(response.data || []);
     } catch (error) {
-      console.error("Error en búsqueda:", error);
+      console.error('Error en b?squeda:', error);
     } finally {
       setBuscandoTrabajador(false);
     }
@@ -270,28 +255,24 @@ const DepositDetailModal = ({
 
   // Función para guardar cambios del solicitante
   const guardarCambiosSolicitante = async () => {
-    if (!isSupabaseConnected || !solicitanteData.trabajador_id) {
+    if (!isBackendConnected || !solicitanteData.trabajador_id) {
       alert("Debe seleccionar un trabajador válido");
       return;
     }
 
     setIsProcessing(true);
     try {
-      const { error } = await supabase
-        .from("depositos")
-        .update({
-          trabajador_sucursal_id: solicitanteData.trabajador_id,
-          sucursal_id: solicitanteData.sucursal_id,
-        })
-        .eq("id", deposit.id);
+      const response = await apiPut(`/depositos/${deposit.id}`, {
+        trabajador_sucursal_id: solicitanteData.trabajador_id,
+        sucursal_id: solicitanteData.sucursal_id,
+      });
 
-      if (error) {
-        console.error("Error actualizando solicitante:", error);
-        alert(`Error al actualizar: ${error.message}`);
+      if (response.error) {
+        console.error("Error actualizando solicitante:", response.error);
+        alert(`Error al actualizar: ${response.error}`);
         return;
       }
 
-      // Actualizar el depósito en el estado local
       const trabajadorActualizado = {
         id: solicitanteData.trabajador_id,
         nombre: solicitanteData.trabajador_nombre,
@@ -336,7 +317,7 @@ const DepositDetailModal = ({
     setEditingSolicitante(false);
     setTrabajadoresEncontrados([]);
   };
-  const isSupabaseConnected = supabase && currentUser;
+  const isBackendConnected = !!currentUser;
   const isFieldsOnlyEdit = editMode === "fields-only";
 
   const activeEmpresas = empresas.filter((e) => e.estado === "activo");
@@ -351,9 +332,7 @@ const DepositDetailModal = ({
         monto: deposit.monto || 0,
         moneda: deposit.moneda || "PEN",
         numero_operacion_banco: deposit.numero_operacion_banco || "",
-        fecha_deposito: deposit.fecha_deposito
-          ? new Date(deposit.fecha_deposito).toISOString().split("T")[0]
-          : "",
+        fecha_deposito: normalizeDateForInput(deposit.fecha_deposito),
         imagen_voucher: deposit.imagen_voucher || "",
         cliente: deposit.cliente || "",
         ruc_cliente: deposit.ruc_cliente || "",
@@ -372,32 +351,6 @@ const DepositDetailModal = ({
       setCheckResult({ checked: false, isDuplicate: false, message: "" });
       setIsChecking(false);
 
-      // Cargar datos de Chatwoot del depósito si existen
-      console.log("🔍 Cargando datos de Chatwoot del depósito:", {
-        chatwoot_conversation_id: deposit.chatwoot_conversation_id,
-        chatwoot_config_id: deposit.chatwoot_config_id,
-        chatwoot_message_id: deposit.chatwoot_message_id,
-      });
-
-      if (deposit.chatwoot_conversation_id) {
-        console.log(
-          "✅ Seteando chatwootConversationId:",
-          deposit.chatwoot_conversation_id,
-        );
-        setChatwootConversationId(deposit.chatwoot_conversation_id);
-      } else {
-        console.log("⚠️ No hay chatwoot_conversation_id en el depósito");
-      }
-
-      if (deposit.chatwoot_config_id) {
-        console.log(
-          "✅ Seteando chatwootConfigId:",
-          deposit.chatwoot_config_id,
-        );
-        setChatwootConfigId(deposit.chatwoot_config_id.toString());
-      } else {
-        console.log("⚠️ No hay chatwoot_config_id en el depósito");
-      }
     }
   }, [deposit]);
 
@@ -422,68 +375,29 @@ const DepositDetailModal = ({
     }
   }, [editableData.empresa_id, editableData.banco_id, cuentas]);
 
-  // Cargar configuraciones de Chatwoot al montar el componente
-  useEffect(() => {
-    const loadChatwootConfigs = async () => {
-      if (!isSupabaseConnected) return;
-
-      try {
-        const { data, error } = await supabase
-          .from("chatwoot_config")
-          .select("*")
-          .eq("activo", true)
-          .order("alias");
-
-        if (error) {
-          console.error("Error cargando configuraciones Chatwoot:", error);
-          return;
-        }
-
-        setChatwootConfigs(data || []);
-
-        // Seleccionar la primera configuración por defecto si existe
-        if (data && data.length > 0) {
-          setChatwootConfigId(data[0].id.toString());
-        }
-      } catch (error) {
-        console.error("Error al cargar configuraciones Chatwoot:", error);
-      }
-    };
-
-    loadChatwootConfigs();
-  }, [isSupabaseConnected]);
+  // Chatwoot fue desactivado; se conserva el estado solo para compatibilidad temporal.
 
   // Cargar configuraciones al montar el componente
   useEffect(() => {
     const loadYCloudConfigs = async () => {
-      if (!isSupabaseConnected) return;
+      if (!isBackendConnected) return;
 
       try {
-        const { data, error } = await supabase
-          .from("ycloud_config")
-          .select("*")
-          .eq("activo", true)
-          .order("alias");
+        const response = await apiGet('/ycloud/configs/active');
+        const data = response.data || [];
+        setYCloudConfigs(data);
 
-        if (error) {
-          console.error("Error cargando configuraciones:", error);
-          return;
-        }
-
-        setYCloudConfigs(data || []);
-
-        // Seleccionar la primera configuración por defecto si existe
         if (data && data.length > 0) {
-          setYCloudConfigId(data[0].id.toString());
-          console.log("✅ Configuración por defecto:", data[0].alias);
+          setYCloudConfigId(String(data[0].id));
+          console.log('? Configuraci?n por defecto:', data[0].alias);
         }
       } catch (error) {
-        console.error("Error al cargar configuraciones:", error);
+        console.error('Error al cargar configuraciones:', error);
       }
     };
 
     loadYCloudConfigs();
-  }, [isSupabaseConnected]);
+  }, [isBackendConnected]);
 
   // Calcular tiempo transcurrido y hora de recibido
   useEffect(() => {
@@ -542,40 +456,34 @@ const DepositDetailModal = ({
   };
 
   const handleCheckDuplicates = async () => {
-    console.log("🔍 Iniciando comprobación de duplicados...", {
+    console.log('?? Iniciando comprobaci?n de duplicados...', {
       numero_operacion: editableData.numero_operacion_banco,
       monto: editableData.monto,
       fecha_deposito: editableData.fecha_deposito,
-      isSupabaseConnected,
+      isBackendConnected,
     });
 
     setIsChecking(true);
-    setCheckResult({ checked: false, isDuplicate: false, message: "" });
+    setCheckResult({ checked: false, isDuplicate: false, message: '' });
 
-    if (
-      !editableData.numero_operacion_banco ||
-      !editableData.monto ||
-      !editableData.moneda
-    ) {
+    if (!editableData.numero_operacion_banco || !editableData.monto || !editableData.moneda) {
       setCheckResult({
         checked: true,
         isDuplicate: true,
         message:
-          "El importe, moneda y nro. de operación son necesarios para la comprobación.",
+          "El importe, moneda y número de operación bancaria son necesarios para la comprobación.",
       });
       setIsChecking(false);
       return;
     }
 
-    if (!isSupabaseConnected) {
-      console.log(
-        "⚠️  Modo simulado: comprobación de duplicados no disponible",
-      );
+    if (!isBackendConnected) {
+      console.log('??  Modo simulado: comprobaci?n de duplicados no disponible');
       setTimeout(() => {
         setCheckResult({
           checked: true,
           isDuplicate: false,
-          message: "Comprobación de duplicados no disponible en modo simulado.",
+          message: 'Comprobaci?n de duplicados no disponible en modo simulado.',
         });
         setIsChecking(false);
       }, 500);
@@ -583,114 +491,47 @@ const DepositDetailModal = ({
     }
 
     try {
-      console.log("📡 Consultando tabla depositos en Supabase...", {
-        tabla: "depositos",
+      const response = await apiPost('/depositos/check-duplicate', {
         monto: editableData.monto,
         moneda: editableData.moneda,
-        numero_operacion: editableData.numero_operacion_banco,
+        numero_operacion_banco: editableData.numero_operacion_banco,
+        excludeId: deposit.id,
       });
 
-      const { data, error } = await supabase
-        .from("depositos")
-        .select(
-          `
-          id,
-          numero_operacion,
-          numero_operacion_banco,
-          monto,
-          moneda,
-          fecha_deposito,
-          fecha_registro,
-          estado,
-          sucursal:sucursal_id(nombre),
-          trabajador:trabajador_sucursal_id(nombre),
-          empresa:empresa_id(nombre),
-          banco:banco_id(nombre, abreviatura)
-        `,
-        )
-        .eq("monto", editableData.monto)
-        .eq("moneda", editableData.moneda)
-        .neq("id", deposit.id)
-        .eq("estado", "validado");
+      const duplicates = response.duplicates || [];
 
-      console.log("📋 Resultado de consulta Supabase:", {
-        data,
-        error,
-        cantidadResultados: data?.length || 0,
-        resultados:
-          data?.map((d) => ({
-            id: d.id,
-            numero_operacion: d.numero_operacion,
-            numero_operacion_banco: d.numero_operacion_banco,
-          })) || [],
-      });
-
-      if (error) {
-        console.error("❌ Error en consulta Supabase:", error);
+      if (response.error) {
+        console.error('? Error en consulta backend:', response.error);
         setCheckResult({
           checked: true,
           isDuplicate: true,
-          message: `Error al comprobar: ${error.message}`,
+          message: 'Error al comprobar: ' + response.error,
         });
         setIsChecking(false);
         return;
       }
 
-      // Verificar duplicados en los resultados
-      const normalizedInputOp = editableData.numero_operacion_banco.replace(
-        /^0+/,
-        "",
-      );
-
-      // Filtrar todos los duplicados, no solo el primero
-      const duplicates = data.filter((d) => {
-        // Verificar por numero_operacion_banco (campo del banco)
-        if (d.numero_operacion_banco) {
-          const normalizedDbOpBanco = d.numero_operacion_banco.replace(
-            /^0+/,
-            "",
-          );
-          if (normalizedDbOpBanco === normalizedInputOp) return true;
-        }
-
-        // Verificar por numero_operacion (campo principal) como fallback
-        if (d.numero_operacion) {
-          const normalizedDbOp = d.numero_operacion.replace(/^0+/, "");
-          if (normalizedDbOp === normalizedInputOp) return true;
-        }
-
-        return false;
-      });
-
       if (duplicates.length > 0) {
-        console.log("⚠️  Duplicados encontrados:", duplicates);
-
-        // Guardar duplicados para mostrar en el modal
         setDuplicateDeposits(duplicates);
-
         setCheckResult({
           checked: true,
           isDuplicate: true,
-          message: `¡Alerta de Duplicado! Se encontraron ${duplicates.length} depósito(s) con los mismos datos.`,
+          message: response.message || ('?Alerta de Duplicado! Se encontraron ' + duplicates.length + ' dep?sito(s) con los mismos datos.'),
         });
       } else {
-        console.log("✅ No se encontraron duplicados");
         setDuplicateDeposits([]);
         setCheckResult({
           checked: true,
           isDuplicate: false,
-          message: "No se encontraron duplicados. Puede confirmar el depósito.",
+          message: response.message || 'No se encontraron duplicados. Puede confirmar el dep?sito.',
         });
       }
     } catch (criticalError) {
-      console.error(
-        "💥 Error crítico en comprobación de duplicados:",
-        criticalError,
-      );
+      console.error('?? Error cr?tico en comprobaci?n de duplicados:', criticalError);
       setCheckResult({
         checked: true,
         isDuplicate: true,
-        message: `Error crítico: ${criticalError.message}`,
+        message: 'Error cr?tico: ' + criticalError.message,
       });
     } finally {
       setIsChecking(false);
@@ -905,15 +746,8 @@ const DepositDetailModal = ({
       estadoActual: deposit.estado,
       esAntiguoActual: deposit.es_antiguo,
       nuevoValor: newValue,
-      supabaseDisponible: !!supabase,
+      backendDisponible: true,
     });
-
-    // Verificar que supabase esté disponible
-    if (!supabase) {
-      console.error("❌ Supabase no está disponible");
-      alert("Error: No hay conexión con la base de datos");
-      return;
-    }
 
     // ACTUALIZACIÓN OPTIMISTA INMEDIATA
     const updatedDeposit = {
@@ -926,29 +760,28 @@ const DepositDetailModal = ({
     console.log("⚡ UI actualizada optimísticamente");
 
     try {
-      console.log("📤 Enviando UPDATE a Supabase...");
+      console.log("📤 Enviando UPDATE al backend...");
       const startTime = Date.now();
 
-      const { data, error } = await supabase
-        .from("depositos")
-        .update({ es_antiguo: newValue })
-        .eq("id", deposit.id)
-        .select();
+      const response = await apiPut(`/depositos/${deposit.id}`, {
+        es_antiguo: newValue,
+      });
+      const data = response.data;
 
       const endTime = Date.now();
       console.log(`⏱️ UPDATE completado en ${endTime - startTime}ms`);
 
-      if (error) {
+      if (response.error) {
         // Revertir cambio optimista si falla
-        console.error("❌ Error actualizando es_antiguo:", error);
-        console.error("Error completo:", JSON.stringify(error, null, 2));
+        console.error("❌ Error actualizando es_antiguo:", response.error);
+        console.error("Error completo:", JSON.stringify(response.error, null, 2));
         onUpdateDeposit(deposit); // Revertir al estado original
-        alert(`Error al actualizar: ${error.message}`);
+        alert(`Error al actualizar: ${response.error}`);
         return;
       }
 
       console.log("✅ Marca de antiguo sincronizada con servidor");
-      console.log("📦 Respuesta de Supabase:", data);
+      console.log("📦 Respuesta del backend:", data);
 
       // Si se marcó como antiguo Y tiene configuración, enviar mensaje automático
       if (newValue && yCloudConfigId) {
@@ -1125,229 +958,6 @@ ${reason}`;
 
     setIsRejectionModalOpen(false);
     setIsProcessing(false);
-    onClose();
-  };
-
-  const handleConfirmDepositChatwoot = async () => {
-    console.log(
-      "🔄 handleConfirmDepositChatwoot ejecutado - Inicio validación",
-      {
-        chatwootConfigId,
-        chatwootConversationId,
-        depositData: {
-          chatwoot_config_id: deposit.chatwoot_config_id,
-          chatwoot_conversation_id: deposit.chatwoot_conversation_id,
-          chatwoot_message_id: deposit.chatwoot_message_id,
-        },
-      },
-    );
-
-    // Validar campos requeridos del depósito
-    const camposRequeridos = [];
-
-    if (!editableData.empresa_id) {
-      camposRequeridos.push("Empresa");
-    }
-
-    if (!editableData.banco_id) {
-      camposRequeridos.push("Banco");
-    }
-
-    if (!editableData.anexo) {
-      camposRequeridos.push("Anexo");
-    }
-
-    if (!editableData.moneda) {
-      camposRequeridos.push("Moneda");
-    }
-
-    // Validar datos de Chatwoot (de la BD o del estado)
-    if (!chatwootConfigId) {
-      camposRequeridos.push(
-        "Configuración de Chatwoot (no disponible en la BD)",
-      );
-    }
-
-    // Note: chatwootConversationId is optional here because:
-    // 1. For new deposits, it will be created during the confirmation process
-    // 2. For existing deposits, it's loaded from deposit.chatwoot_conversation_id
-
-    // Si faltan campos, mostrar error y no continuar
-    if (camposRequeridos.length > 0) {
-      const mensaje = `Por favor, complete los siguientes campos requeridos: ${camposRequeridos.join(
-        ", ",
-      )}`;
-      alert(mensaje);
-      console.error("❌ Validación fallida:", {
-        camposRequeridos,
-        editableData,
-      });
-      return;
-    }
-
-    console.log("✅ Validación exitosa, confirmando depósito por Chatwoot...");
-
-    // Use conversation ID from deposit if state is empty
-    const conversationId =
-      chatwootConversationId || deposit.chatwoot_conversation_id;
-
-    console.log("🔍 Resolviendo conversationId:", {
-      fromState: chatwootConversationId,
-      fromDeposit: deposit.chatwoot_conversation_id,
-      resolved: conversationId,
-    });
-
-    if (!conversationId) {
-      const errorMsg = `Error: No se encontró el ID de conversación de Chatwoot.
-      
-Estado: ${chatwootConversationId || "vacío"}
-Depósito: ${deposit.chatwoot_conversation_id || "vacío"}
-
-Este depósito debe tener datos de Chatwoot guardados.`;
-
-      alert(errorMsg);
-      console.error("❌ No hay conversation_id disponible:", {
-        stateValue: chatwootConversationId,
-        depositValue: deposit.chatwoot_conversation_id,
-        depositData: deposit,
-      });
-      return;
-    }
-
-    const payload = buildUpdatePayload({
-      estado: "validado",
-      motivo_rechazo: null,
-      validado_por: currentUser.id,
-      fecha_validacion: new Date().toISOString(),
-      chatwoot_conversation_id: conversationId,
-      chatwoot_config_id: parseInt(chatwootConfigId),
-    });
-
-    console.log("📤 Enviando actualización del depósito:", {
-      depositId: deposit.id,
-      payload: payload,
-    });
-
-    // Enviar confirmación por Chatwoot primero para obtener el message_id
-    setIsSendingToChatwoot(true);
-
-    try {
-      const empresa = empresas?.find((e) => e.id === editableData.empresa_id);
-      const banco = bancos?.find((b) => b.id === editableData.banco_id);
-
-      if (empresa && banco) {
-        // Formatear fecha correctamente sin problemas de zona horaria
-        const formatearFechaDeposito = (fechaString) => {
-          // Extraer partes de la fecha sin crear objeto Date que cause problemas de timezone
-          const [year, month, day] = fechaString.split("T")[0].split("-");
-          return `${day}/${month}/${year}`;
-        };
-
-        // Formatear mensaje de confirmación
-        const mensajeChatwoot = `🎉 *DEPÓSITO CONFIRMADO*
-
-✅ *Empresa:* ${empresa.nombre}
-📍 *Sucursal:* ${deposit.sucursal?.nombre || "-"}
-🏦 *Banco:* ${banco.nombre}
-🔢 *Anexo:* ${editableData.anexo}
-📅 *Fecha Depósito:* ${formatearFechaDeposito(editableData.fecha_deposito)}
-🆔 *Operación:* ${
-          editableData.numero_operacion_banco || deposit.numero_operacion
-        }
-💰 *Importe:* ${editableData.moneda} ${parseFloat(editableData.monto).toFixed(
-          2,
-        )}
-
-El depósito ha sido validado y confirmado exitosamente.
-
-_Mensaje automático del sistema de control de depósitos_`;
-
-        console.log("📱 Enviando mensaje a Chatwoot:", {
-          configId: chatwootConfigId,
-          conversationId: conversationId,
-          empresa: empresa.nombre,
-          banco: banco.nombre,
-        });
-
-        // Si el depósito ya tiene un mensaje de Chatwoot previo, responder a ese mensaje
-        const result = deposit.chatwoot_message_id
-          ? await chatwootService.replyToMessage({
-              configId: chatwootConfigId,
-              conversationId: conversationId,
-              content: mensajeChatwoot,
-              inReplyTo: deposit.chatwoot_message_id,
-            })
-          : await chatwootService.sendMessage({
-              configId: chatwootConfigId,
-              conversationId: conversationId,
-              content: mensajeChatwoot,
-              messageType: "outgoing",
-            });
-
-        if (result.success) {
-          console.log("✅ Confirmación enviada por Chatwoot:", {
-            messageId: result.data?.id,
-            status: result.data?.status,
-          });
-
-          // Actualizar el payload con el message_id de Chatwoot
-          const finalPayload = {
-            ...payload,
-            chatwoot_message_id: result.data?.id
-              ? result.data.id.toString()
-              : null,
-          };
-
-          // Actualizar el depósito con todos los datos incluyendo message_id preservando relaciones
-          onUpdateDeposit({
-            ...deposit, // Preservar todo el depósito original (incluyendo relaciones)
-            ...finalPayload, // Sobrescribir solo los campos actualizados
-          });
-
-          alert(
-            "✅ Depósito confirmado y mensaje enviado por Chatwoot exitosamente",
-          );
-        } else {
-          console.warn(
-            "⚠️ No se pudo enviar mensaje por Chatwoot:",
-            result.error,
-          );
-
-          // Actualizar el depósito sin message_id preservando relaciones
-          onUpdateDeposit({
-            ...deposit, // Preservar todo el depósito original (incluyendo relaciones)
-            ...payload, // Sobrescribir solo los campos actualizados
-          });
-
-          alert(
-            `⚠️ Depósito confirmado, pero hubo un error al enviar por Chatwoot: ${result.message}`,
-          );
-        }
-      } else {
-        console.error("❌ No se encontraron datos de empresa o banco");
-
-        // Actualizar el depósito sin datos de Chatwoot preservando relaciones
-        onUpdateDeposit({
-          ...deposit,
-          ...payload,
-        });
-
-        alert("⚠️ Depósito confirmado, pero faltan datos de empresa o banco");
-      }
-    } catch (error) {
-      console.error("❌ Error enviando confirmación por Chatwoot:", error);
-
-      // Actualizar el depósito sin datos de Chatwoot preservando relaciones
-      onUpdateDeposit({
-        ...deposit,
-        ...payload,
-      });
-
-      alert(`❌ Error enviando mensaje por Chatwoot: ${error.message}`);
-    } finally {
-      setIsSendingToChatwoot(false);
-    }
-
     onClose();
   };
 
@@ -1635,13 +1245,9 @@ _Mensaje automático del sistema de control de depósitos_`;
     setIsProcessing(true);
 
     try {
-      const { error } = await supabase
-        .from("depositos")
-        .update(payload)
-        .eq("id", deposit.id);
-
-      if (error) {
-        throw error;
+      const response = await apiPut(`/depositos/${deposit.id}`, payload);
+      if (response.error) {
+        throw new Error(response.error);
       }
 
       console.log("✅ Depósito confirmado exitosamente SIN envío de mensajes");
@@ -1770,16 +1376,6 @@ _Mensaje automático del sistema de control de depósitos_`;
 
   // Verificar si el depósito tiene datos de Chatwoot guardados
   // Note: chatwootConversationId is created during confirmation, so we don't require it here
-  const canConfirmChatwoot =
-    checkResult.checked &&
-    !checkResult.isDuplicate &&
-    !isChecking &&
-    editableData.empresa_id &&
-    editableData.banco_id &&
-    editableData.anexo &&
-    editableData.moneda &&
-    chatwootConfigId;
-
   // Verificar si se puede confirmar
   const canConfirmYCloud =
     checkResult.checked &&
@@ -1790,6 +1386,49 @@ _Mensaje automático del sistema de control de depósitos_`;
     editableData.anexo &&
     editableData.moneda &&
     yCloudConfigId;
+
+  // Atajos de teclado para acelerar la confirmación
+  useEffect(() => {
+    if (!deposit) return undefined;
+
+    const handleKeyboardShortcuts = (event) => {
+      if (isTypingTarget(event.target)) return;
+      if (isSending || isProcessing) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Enter") return;
+
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        if (canConfirm) {
+          handleConfirmDepositWithMessage();
+        }
+        return;
+      }
+
+      event.preventDefault();
+      if (canConfirm) {
+        handleConfirmDepositSinMensaje();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyboardShortcuts);
+    return () => window.removeEventListener("keydown", handleKeyboardShortcuts);
+  }, [
+    canConfirm,
+    deposit,
+    handleConfirmDepositSinMensaje,
+    handleConfirmDepositWithMessage,
+    isProcessing,
+    isSending,
+    isTypingTarget,
+    onClose,
+  ]);
 
   const isFullEditDisabled =
     deposit.estado !== "pendiente" && deposit.estado !== "en_validacion";
@@ -1818,6 +1457,64 @@ _Mensaje automático del sistema de control de depósitos_`;
     const fileId = displayVoucherUrl.split("/d/")[1].split("/")[0];
     displayVoucherUrl = `https://drive.google.com/file/d/${fileId}/preview`;
   }
+
+  const duplicateMatchComparisonRows = useMemo(() => {
+    const duplicate = duplicateDeposits[0];
+    if (!duplicate) return [];
+
+    const formatAmount = (value, currency) => {
+      const numericValue = Number(value) || 0;
+      const amountFormatted = new Intl.NumberFormat("es-PE", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(numericValue);
+      const currencyPrefix = (currency || "PEN") === "PEN" ? "S/" : currency || "-";
+      return `${currencyPrefix} ${amountFormatted}`;
+    };
+
+    return [
+      {
+        field: "Importe",
+        modal: formatAmount(editableData.monto, editableData.moneda),
+        database: formatAmount(duplicate.monto, duplicate.moneda),
+      },
+      {
+        field: "Moneda",
+        modal: editableData.moneda || "PEN",
+        database: duplicate.moneda || "-",
+      },
+      {
+        field: "Operación bancaria",
+        modal: editableData.numero_operacion_banco || "-",
+        database:
+          duplicate.numero_operacion_banco ||
+          duplicate.numero_operacion ||
+          "-",
+      },
+      {
+        field: "Estado",
+        modal: deposit?.estado || "-",
+        database: duplicate.estado || "-",
+      },
+      {
+        field: "Banco",
+        modal:
+          deposit?.banco?.abreviatura ||
+          deposit?.banco?.nombre ||
+          editableData.banco_id ||
+          "-",
+        database:
+          duplicate.banco?.abreviatura ||
+          duplicate.banco?.nombre ||
+          "-",
+      },
+      {
+        field: "Fecha depósito",
+        modal: editableData.fecha_deposito || deposit?.fecha_deposito || "-",
+        database: duplicate.fecha_deposito || "-",
+      },
+    ];
+  }, [duplicateDeposits, editableData, deposit]);
 
   return (
     <>
@@ -1878,12 +1575,11 @@ _Mensaje automático del sistema de control de depósitos_`;
                 </button>
               )}
 
-              {/* Botones de Chatwoot */}
-              {deposit.chatwoot_conversation_id &&
-                deposit.chatwoot_config_id && (
+              {/* Chatwoot desactivado */}
+              {false && (
                   <>
                     <button
-                      onClick={() => setShowChatwootIframe(true)}
+                      onClick={() => {}}
                       className="flex items-center space-x-2 px-2 md:px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors"
                       title="Ver conversación de Chatwoot embebida"
                     >
@@ -1892,11 +1588,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                     </button>
                     <button
                       onClick={() => {
-                        const chatwootUrl = buildChatwootWebUrl(
-                          deposit.chatwoot_config_id,
-                          deposit.chatwoot_conversation_id,
-                        );
-                        window.open(chatwootUrl, "_blank");
+                        void 0;
                       }}
                       className="flex items-center space-x-2 px-2 md:px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
                       title="Abrir conversación en Chatwoot (nueva pestaña)"
@@ -2204,19 +1896,23 @@ _Mensaje automático del sistema de control de depósitos_`;
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: 10 }}
                             className={`mt-3 text-sm font-medium p-2.5 rounded-lg ${
-                              checkResult.isDuplicate
-                                ? "bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300"
-                                : "bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300"
+                              isChecking
+                                ? "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300"
+                                : checkResult.isDuplicate
+                                  ? "bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300"
+                                  : "bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300"
                             }`}
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center space-x-2">
                                 {checkResult.isDuplicate ? (
                                   <Info size={12} />
+                                ) : isChecking ? (
+                                  <Search size={12} />
                                 ) : (
                                   <CheckCircle size={12} />
                                 )}
-                                <span>{checkResult.message}</span>
+                                <span className="whitespace-pre-line">{checkResult.message}</span>
                               </div>
                               {checkResult.isDuplicate &&
                                 duplicateDeposits.length > 0 && (
@@ -2249,7 +1945,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                     <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                       Datos del Solicitante
                     </h4>
-                    {!editingSolicitante && isSupabaseConnected && (
+                    {!editingSolicitante && isBackendConnected && (
                       <button
                         onClick={() => {
                           setEditingSolicitante(true);
@@ -2553,7 +2249,10 @@ _Mensaje automático del sistema de control de depósitos_`;
             </div>
           </div>
 
-          <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0 flex items-center justify-end space-x-2 bg-gray-50 dark:bg-gray-800/50 rounded-b-xl">
+          <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0 flex items-center justify-end gap-2 bg-gray-50 dark:bg-gray-800/50 rounded-b-xl">
+            <div className="mr-auto hidden md:block text-xs text-gray-500 dark:text-gray-400">
+              Enter: confirmar rápido · Ctrl/Cmd+Enter: confirmar con mensaje · Esc: cerrar
+            </div>
             {isFieldsOnlyEdit ? (
               <>
                 <button
@@ -2566,14 +2265,28 @@ _Mensaje automático del sistema de control de depósitos_`;
                   <button
                     onClick={() =>
                       onOpenVoucherWindow(displayVoucherUrl, {
-                        numero_operacion:
+                        fecha_deposito:
+                          editableData.fecha_deposito || deposit.fecha_deposito,
+                        fechaDeposito:
+                          editableData.fecha_deposito || deposit.fecha_deposito,
+                        numero_operacion_solicitante: deposit.numero_operacion,
+                        numero_operacion_banco:
                           editableData.numero_operacion_banco ||
-                          deposit.numero_operacion,
+                          deposit.numero_operacion_banco ||
+                          "",
+                        importe: editableData.monto || deposit.monto,
+                        moneda: editableData.moneda || deposit.moneda,
+                        cliente: editableData.cliente || deposit.cliente,
+                        estado: deposit.estado,
+                        sucursal: deposit.sucursal?.nombre || "",
+                        banco:
+                          deposit.banco?.abreviatura || deposit.banco?.nombre || "",
                         monto: editableData.monto || deposit.monto,
+                        deposit_id: deposit.id,
                       })
                     }
                     className="px-2 md:px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium flex items-center justify-center space-x-2 text-sm"
-                    title="Abrir voucher en panel lateral y llenar extensión"
+                    title="Abrir panel lateral"
                   >
                     <PanelRightOpen size={12} />
                     <span className="hidden md:inline">Panel Lateral</span>
@@ -2600,14 +2313,28 @@ _Mensaje automático del sistema de control de depósitos_`;
                   <button
                     onClick={() =>
                       onOpenVoucherWindow(displayVoucherUrl, {
-                        numero_operacion:
+                        fecha_deposito:
+                          editableData.fecha_deposito || deposit.fecha_deposito,
+                        fechaDeposito:
+                          editableData.fecha_deposito || deposit.fecha_deposito,
+                        numero_operacion_solicitante: deposit.numero_operacion,
+                        numero_operacion_banco:
                           editableData.numero_operacion_banco ||
-                          deposit.numero_operacion,
+                          deposit.numero_operacion_banco ||
+                          "",
+                        importe: editableData.monto || deposit.monto,
+                        moneda: editableData.moneda || deposit.moneda,
+                        cliente: editableData.cliente || deposit.cliente,
+                        estado: deposit.estado,
+                        sucursal: deposit.sucursal?.nombre || "",
+                        banco:
+                          deposit.banco?.abreviatura || deposit.banco?.nombre || "",
                         monto: editableData.monto || deposit.monto,
+                        deposit_id: deposit.id,
                       })
                     }
                     className="px-2 md:px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium flex items-center justify-center space-x-2 text-sm"
-                    title="Abrir voucher en panel lateral y llenar extensión"
+                    title="Abrir panel lateral"
                   >
                     <PanelRightOpen size={12} />
                     <span className="hidden md:inline">Panel Lateral</span>
@@ -2795,6 +2522,58 @@ _Mensaje automático del sistema de control de depósitos_`;
 
               {/* Content */}
               <div className="flex-1 overflow-y-auto p-4">
+                {duplicateMatchComparisonRows.length > 0 && (
+                  <div className="mb-4 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-red-200 dark:border-red-900/50 bg-red-100/70 dark:bg-red-900/30">
+                      <h4 className="text-sm font-bold text-red-900 dark:text-red-100">
+                        Comparación con el depósito encontrado en la base de datos
+                      </h4>
+                      <p className="text-xs text-red-700 dark:text-red-200">
+                        Aquí se ve tu depósito y el registro que el sistema detectó como posible duplicado.
+                      </p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-red-100/80 dark:bg-red-900/40">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-semibold text-red-900 dark:text-red-100">
+                              Campo
+                            </th>
+                            <th className="px-3 py-2 text-left font-semibold text-red-900 dark:text-red-100">
+                              Tu depósito
+                            </th>
+                            <th className="px-3 py-2 text-left font-semibold text-red-900 dark:text-red-100">
+                              Base de datos
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {duplicateMatchComparisonRows.map((row, index) => (
+                            <tr
+                              key={row.field}
+                              className={`border-t border-red-200 dark:border-red-900/40 ${
+                                index % 2 === 0
+                                  ? "bg-white dark:bg-gray-900/30"
+                                  : "bg-red-50/70 dark:bg-red-950/10"
+                              }`}
+                            >
+                              <td className="px-3 py-2 font-medium text-red-900 dark:text-red-100">
+                                {row.field}
+                              </td>
+                              <td className="px-3 py-2 text-gray-800 dark:text-gray-100 font-mono">
+                                {row.modal}
+                              </td>
+                              <td className="px-3 py-2 text-gray-800 dark:text-gray-100 font-mono">
+                                {row.database}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
                     <thead>
@@ -2919,17 +2698,7 @@ _Mensaje automático del sistema de control de depósitos_`;
       </AnimatePresence>
 
       {/* Modal de Chatwoot embebido */}
-      <AnimatePresence>
-        {showChatwootIframe &&
-          deposit.chatwoot_conversation_id &&
-          deposit.chatwoot_config_id && (
-            <ChatwootConversation
-              conversationId={deposit.chatwoot_conversation_id}
-              chatwootConfigId={deposit.chatwoot_config_id}
-              onClose={() => setShowChatwootIframe(false)}
-            />
-          )}
-      </AnimatePresence>
+      <AnimatePresence>{false}</AnimatePresence>
     </>
   );
 };
