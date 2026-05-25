@@ -68,6 +68,8 @@ const KanbanView = ({
   const { currentUser } = useContext(AuthContext);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [amountSearch, setAmountSearch] = useState("");
+  const [branchPersonSearch, setBranchPersonSearch] = useState("");
   const [filterDateOption, setFilterDateOption] = useState("specific");
   const [specificDate, setSpecificDate] = useState(() => {
     const fecha = toLocalISOString(new Date());
@@ -80,7 +82,6 @@ const KanbanView = ({
   const selectedDepositRef = useRef(null);
   const modalOpenTimeRef = useRef(0);
   const hasRestoredRef = useRef(false);
-  const isInitialMountRef = useRef(true);
 
   // Estados para colapsar/expandir secciones de "En Validación"
   const [showNormales, setShowNormales] = useState(true);
@@ -327,6 +328,9 @@ const KanbanView = ({
       "📅 KANBAN: Fechas disponibles (primeros 5):",
       fechasDisponibles,
     );
+    const normalizedAmountSearch = amountSearch.replace(/\s+/g, "").replace(",", ".").trim();
+    const normalizedBranchSearch = branchPersonSearch.toLowerCase().trim();
+
     const filtered = deposits.filter((deposit) => {
       const lowerCaseSearchTerm = debouncedSearchTerm.toLowerCase();
 
@@ -369,10 +373,27 @@ const KanbanView = ({
           deposit.monto.toString().includes(lowerCaseSearchTerm)) ||
         formattedDateTime.includes(lowerCaseSearchTerm);
 
+      const montoText = deposit.monto != null ? String(deposit.monto) : "";
+      const montoFormatted = Number(deposit.monto || 0).toLocaleString("es-ES", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const matchesAmount =
+        !normalizedAmountSearch ||
+        montoText.includes(normalizedAmountSearch) ||
+        montoFormatted.includes(normalizedAmountSearch);
+
+      const matchesBranchPerson =
+        !normalizedBranchSearch ||
+        (deposit.trabajador?.nombre &&
+          deposit.trabajador.nombre.toLowerCase().includes(normalizedBranchSearch)) ||
+        (deposit.trabajador?.telefono_origen &&
+          deposit.trabajador.telefono_origen.toLowerCase().includes(normalizedBranchSearch));
+
       // NOTA: Ya NO filtramos por fecha aquí porque la BD ya trae solo los depósitos
       // de la fecha específica solicitada (ver useEffect que llama onFetchDepositsByDate)
 
-      return matchesSearch;
+      return matchesSearch && matchesAmount && matchesBranchPerson;
     });
 
     console.log(
@@ -382,7 +403,7 @@ const KanbanView = ({
       deposits.length,
     );
     return filtered;
-  }, [deposits, debouncedSearchTerm]);
+  }, [deposits, debouncedSearchTerm, amountSearch, branchPersonSearch]);
 
   const groupedDeposits = useMemo(() => {
     const grouped = filteredDeposits.reduce((acc, deposit) => {
@@ -569,6 +590,27 @@ const KanbanView = ({
               <option value="today">Hoy</option>
               <option value="specific">Fecha específica</option>
             </select>
+          </div>
+
+          <div className="relative">
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="Importe..."
+              value={amountSearch}
+              onChange={(e) => setAmountSearch(e.target.value)}
+              className="w-full md:w-40 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            />
+          </div>
+
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Persona sucursal..."
+              value={branchPersonSearch}
+              onChange={(e) => setBranchPersonSearch(e.target.value)}
+              className="w-full md:w-56 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            />
           </div>
 
           <AnimatePresence>

@@ -179,6 +179,9 @@ export function useDepositDashboard() {
     [mergeDepositsIntoView]
   );
 
+  const applyKanbanRealtimeUpdates = useCallback(async () => {}, []);
+  const applyKanbanPayload = useCallback(() => {}, []);
+
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
       setAppDataLoading(true);
@@ -552,7 +555,8 @@ export function useDepositDashboard() {
   );
 
   useEffect(() => {
-    return () => {};
+    if (false) {
+      return () => {};
 
     if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban" || !supabase) {
       if (realtimeChannelRef.current) {
@@ -641,6 +645,7 @@ export function useDepositDashboard() {
       kanbanRealtimeQueueRef.current = [];
       supabase.removeChannel(channel);
     };
+    }
   }, [applyKanbanPayload, applyKanbanRealtimeUpdates, currentUser, isSupabaseConnected, location.pathname]);
 
   useEffect(() => {
