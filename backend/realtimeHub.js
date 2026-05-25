@@ -582,7 +582,7 @@ async function fetchVoucherBinary(sourceUrl) {
 async function fetchDepositsForVoucherExport(filters = {}) {
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no está configurado en el backend");
+    throw new Error("Supabase no estÃ¡ configurado en el backend");
   }
 
   const { ids, exportMode, specificDate, filterPeriod, selectedMonth, searchTerm, filterStatus } = filters;
@@ -722,7 +722,7 @@ async function runVoucherExportJob(jobId, filters) {
       updateVoucherExportJob(jobId, {
         status: "error",
         progress: 100,
-        error: "No se pudo descargar ningún voucher para exportar",
+        error: "No se pudo descargar ningÃºn voucher para exportar",
         failures,
         completedAt: new Date().toISOString(),
       });
@@ -889,21 +889,21 @@ async function getAuthenticatedUserFromRequest(req) {
 
   const authClient = getSupabaseAuthClient();
   if (!authClient) {
-    const error = new Error("Supabase no está configurado en el backend");
+    const error = new Error("Supabase no estÃ¡ configurado en el backend");
     error.statusCode = 503;
     throw error;
   }
 
   const { data, error } = await authClient.auth.getUser(token);
   if (error) {
-    const authError = new Error(error.message || "No se pudo validar la sesión");
+    const authError = new Error(error.message || "No se pudo validar la sesiÃ³n");
     authError.statusCode = 401;
     throw authError;
   }
 
   const authUser = data?.user || null;
   if (!authUser) {
-    const authError = new Error("Sesión inválida");
+    const authError = new Error("SesiÃ³n invÃ¡lida");
     authError.statusCode = 401;
     throw authError;
   }
@@ -930,7 +930,7 @@ async function getAuthenticatedUserFromRequest(req) {
 async function fetchBootstrapData() {
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no está configurado en el backend");
+    throw new Error("Supabase no estÃ¡ configurado en el backend");
   }
 
   const [bancosRes, empresasRes, cuentasRes, sucursalesRes, personalRes] =
@@ -979,7 +979,7 @@ async function fetchBootstrapData() {
 async function fetchActiveYCloudConfigs() {
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no está configurado en el backend");
+    throw new Error("Supabase no estÃ¡ configurado en el backend");
   }
 
   const { data, error } = await runLoggedQuery(
@@ -1064,7 +1064,7 @@ async function fetchDocumentsVoucherPage({ date, period, search, page = 1, pageS
 
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no estÃ¡ configurado en el backend");
+    throw new Error("Supabase no estÃƒÂ¡ configurado en el backend");
   }
 
   const selectFields = `id, numero_operacion, cliente, monto, fecha_registro, fecha_solo_date, imagen_voucher, anexo, numero_operacion_banco, fecha_deposito, estado, observaciones, motivo_rechazo, fecha_validacion, referencia_cliente, validado_por, moneda, ruc_cliente, telefono_origen, es_antiguo,
@@ -1146,7 +1146,7 @@ async function fetchDocumentsVoucherPage({ date, period, search, page = 1, pageS
 async function fetchYCloudConfigById(configId) {
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no está configurado en el backend");
+    throw new Error("Supabase no estÃ¡ configurado en el backend");
   }
 
   const { data, error } = await runLoggedQuery(
@@ -1257,7 +1257,7 @@ async function sendYCloudMessage(messageData) {
 
   const config = await fetchYCloudConfigById(configId);
   if (!config || !config.activo) {
-    throw new Error("Configuración YCloud no encontrada o inactiva");
+    throw new Error("ConfiguraciÃ³n YCloud no encontrada o inactiva");
   }
 
   const payload = buildYCloudPayload(messageData, config);
@@ -1286,7 +1286,7 @@ async function sendYCloudMessage(messageData) {
 async function fetchWhatsAppCredentials() {
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no está configurado en el backend");
+    throw new Error("Supabase no estÃ¡ configurado en el backend");
   }
 
   const tryRpc = await runLoggedQuery("whatsapp.credentials.rpc", {}, () =>
@@ -1364,7 +1364,7 @@ async function fetchDeposits({
 }) {
   const client = getSupabaseAdminClient();
   if (!client) {
-    throw new Error("Supabase no está configurado en el backend");
+    throw new Error("Supabase no estÃ¡ configurado en el backend");
   }
 
   let query = client.from("depositos").select(
@@ -1574,7 +1574,7 @@ function registerJsonRoutes(app) {
 
       const authClient = getSupabaseAuthClient();
       if (!authClient) {
-        return res.status(503).json({ error: "Supabase no está configurado en el backend" });
+        return res.status(503).json({ error: "Supabase no estÃ¡ configurado en el backend" });
       }
 
       const { data, error } = await authClient.auth.signInWithPassword({ email, password });
@@ -1595,7 +1595,7 @@ function registerJsonRoutes(app) {
 
       const authClient = getSupabaseAuthClient();
       if (!authClient) {
-        return res.status(503).json({ error: "Supabase no está configurado en el backend" });
+        return res.status(503).json({ error: "Supabase no estÃ¡ configurado en el backend" });
       }
 
       const { data, error } = await authClient.auth.signUp({
@@ -1626,7 +1626,7 @@ function registerJsonRoutes(app) {
 
       const authClient = getSupabaseAuthClient();
       if (!authClient) {
-        return res.status(503).json({ error: "Supabase no está configurado en el backend" });
+        return res.status(503).json({ error: "Supabase no estÃ¡ configurado en el backend" });
       }
 
       const { data, error } = await authClient.auth.getUser(token);
@@ -1647,7 +1647,7 @@ function registerJsonRoutes(app) {
 
       const authClient = getSupabaseAuthClient();
       if (!authClient) {
-        return res.status(503).json({ error: "Supabase no está configurado en el backend" });
+        return res.status(503).json({ error: "Supabase no estÃ¡ configurado en el backend" });
       }
 
       const { data: sessionData, error: sessionError } = await authClient.auth.setSession({
@@ -1788,7 +1788,7 @@ function registerJsonRoutes(app) {
       res.json({
         success: true,
         data,
-        message: `Conexión exitosa con YCloud. Balance: ${data.amount ?? "N/A"} ${data.currency ?? ""}`.trim(),
+        message: `ConexiÃ³n exitosa con YCloud. Balance: ${data.amount ?? "N/A"} ${data.currency ?? ""}`.trim(),
       });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -1949,7 +1949,7 @@ function registerJsonRoutes(app) {
     try {
       const client = getSupabaseAdminClient();
       if (!client) {
-        return res.status(503).json({ error: "Supabase no está configurado en el backend" });
+        return res.status(503).json({ error: "Supabase no estÃ¡ configurado en el backend" });
       }
 
       const { data, error } = await client
@@ -2025,7 +2025,7 @@ function registerJsonRoutes(app) {
         return res.status(400).json({
           checked: true,
           isDuplicate: true,
-          message: "El importe, moneda y n�mero de operaci�n bancaria son necesarios para la comprobaci�n.",
+          message: "El importe, moneda y número de operación bancaria son necesarios para la comprobación.",
         });
       }
 
@@ -2075,8 +2075,8 @@ function registerJsonRoutes(app) {
         duplicates,
         message:
           duplicates.length > 0
-            ? `¡Alerta de Duplicado! Se encontraron ${duplicates.length} depósito(s) con los mismos datos.`
-            : "No se encontraron duplicados. Puede confirmar el depósito.",
+            ? `Â¡Alerta de Duplicado! Se encontraron ${duplicates.length} depÃ³sito(s) con los mismos datos.`
+            : "No se encontraron duplicados. Puede confirmar el depÃ³sito.",
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -2483,7 +2483,7 @@ function registerJsonRoutes(app) {
         Boolean(filters.filterStatus && filters.filterStatus !== "all");
 
       if (!hasDirectIds && !hasFilters) {
-        return res.status(400).json({ error: "Debes enviar ids o filtros de exportación" });
+        return res.status(400).json({ error: "Debes enviar ids o filtros de exportaciÃ³n" });
       }
 
       const queuedJob = await queueVoucherExportJob(filters, authContext?.authUser?.id || null);
@@ -2527,7 +2527,7 @@ function registerJsonRoutes(app) {
         Boolean(filters.filterStatus && filters.filterStatus !== "all");
 
       if (!hasDirectIds && !hasFilters) {
-        return res.status(400).json({ error: "Debes enviar ids o filtros de exportación" });
+        return res.status(400).json({ error: "Debes enviar ids o filtros de exportaciÃ³n" });
       }
 
       const queuedJob = await queueVoucherExportJob(filters, authContext?.authUser?.id || null);
@@ -2586,7 +2586,7 @@ function registerJsonRoutes(app) {
 
       if (job.status !== "completed" || !job.zipBuffer) {
         return res.status(409).json({
-          error: "El ZIP todavía no está listo",
+          error: "El ZIP todavÃ­a no estÃ¡ listo",
           status: job.status,
           progress: job.progress,
         });
@@ -2711,10 +2711,10 @@ function registerJsonRoutes(app) {
         const translations = {
           Mon: "Lun",
           Tue: "Mar",
-          Wed: "Mié",
+          Wed: "MiÃ©",
           Thu: "Jue",
           Fri: "Vie",
-          Sat: "Sáb",
+          Sat: "SÃ¡b",
           Sun: "Dom",
           January: "Enero",
           February: "Febrero",
