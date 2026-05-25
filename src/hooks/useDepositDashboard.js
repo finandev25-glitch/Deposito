@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { AuthContext } from "../contexts/AuthContext.jsx";
+import { supabase } from "../supabaseClient";
 import {
   initialBancos,
   initialEmpresas,
@@ -58,7 +59,7 @@ export function useDepositDashboard() {
 
   const currentUserRef = useRef(currentUser);
   const currentSelectedDateRef = useRef(currentSelectedDate);
-  const eventSourceRef = useRef(null);
+  const realtimeChannelRef = useRef(null);
   const requestSeqRef = useRef(0);
   const isSupabaseConnected = !!currentUser;
 
@@ -463,47 +464,55 @@ export function useDepositDashboard() {
   ]);
 
   useEffect(() => {
-    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban") {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
+    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban" || !supabase) {
+      if (realtimeChannelRef.current) {
+        supabase?.removeChannel?.(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
       }
       return;
     }
 
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+    if (realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
     }
 
-    const source = new EventSource("/api/events/depositos");
-    eventSourceRef.current = source;
+    const channelName = `kanban-depositos-${currentUser.id || "anon"}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "depositos" },
+        async (payload) => {
+          console.log("🔴 KANBAN realtime: postgres_changes recibido", payload.eventType);
+          try {
+            if (currentSelectedDateRef.current) {
+              await refreshDeposits();
+            } else {
+              await fetchAllDeposits();
+            }
+          } catch (error) {
+            console.error("Error refrescando Kanban tras realtime de Supabase:", error);
+          }
+        }
+      )
+      .subscribe((status, error) => {
+        if (status === "SUBSCRIBED") {
+          console.log("✅ KANBAN realtime: Supabase conectado a depositos");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("Error en el canal Supabase realtime:", status, error || "");
+        } else {
+          console.log("🟡 KANBAN realtime status:", status);
+        }
+      });
 
-    source.addEventListener("connected", () => {
-      console.log("✅ KANBAN realtime: SSE conectado a /api/events/depositos");
-    });
-
-    source.addEventListener("deposit-change", () => {
-      console.log("🔴 KANBAN realtime: deposit-change recibido");
-      if (currentSelectedDateRef.current) {
-        refreshDeposits();
-      } else {
-        fetchAllDeposits();
-      }
-    });
-
-    source.onopen = () => {
-      console.log("🟢 KANBAN realtime: EventSource abierto");
-    };
-
-    source.onerror = (error) => {
-      console.error("Error en el canal backend realtime:", error);
-    };
+    realtimeChannelRef.current = channel;
 
     return () => {
-      source.close();
-      if (eventSourceRef.current === source) {
-        eventSourceRef.current = null;
+      if (realtimeChannelRef.current === channel) {
+        realtimeChannelRef.current = null;
       }
+      supabase.removeChannel(channel);
     };
   }, [currentUser, isSupabaseConnected, location.pathname, fetchAllDeposits, refreshDeposits]);
 
