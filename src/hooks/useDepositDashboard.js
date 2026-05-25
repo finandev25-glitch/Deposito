@@ -498,6 +498,45 @@ export function useDepositDashboard() {
     };
   }, [currentUser, isSupabaseConnected, location.pathname, fetchAllDeposits, refreshDeposits]);
 
+  useEffect(() => {
+    if (!currentUser || !isSupabaseConnected || location.pathname !== "/kanban") {
+      return;
+    }
+
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+
+      if (currentSelectedDateRef.current) {
+        refreshDeposits();
+      } else {
+        fetchAllDeposits();
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+
+      if (currentSelectedDateRef.current) {
+        refreshDeposits();
+      } else {
+        fetchAllDeposits();
+      }
+    }, 30000);
+
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [
+    currentUser,
+    isSupabaseConnected,
+    location.pathname,
+    fetchAllDeposits,
+    refreshDeposits,
+  ]);
+
   return {
     bancos,
     empresas,

@@ -18,6 +18,10 @@ function normalizeSearchValue(value) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function buildSearchVariants(payload, searchType = "both") {
   const variants = [];
   const add = (value) => {
@@ -58,16 +62,16 @@ async function searchInActiveTab(payload, searchType = "both") {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
   if (!tab?.id) {
-    return { ok: false, message: "No hay una pestaña activa para buscar." };
+    return { ok: false, message: "No hay una pestaÃƒÂ±a activa para buscar." };
   }
 
   const searchTerms = buildSearchVariants(payload, searchType);
   if (searchTerms.length === 0) {
-    return { ok: false, message: "No hay nro. operación ni importe para buscar." };
+    return { ok: false, message: "No hay nro. operaciÃƒÂ³n ni importe para buscar." };
   }
 
-  const [{ result } = {}] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
+  const frameResults = await chrome.scripting.executeScript({
+    target: { tabId: tab.id, allFrames: true },
     func: (terms) => {
       const HIGHLIGHT_ATTR = "data-voucher-search-highlight";
       const HIGHLIGHT_CLASS = "__voucher_search_highlight__";
@@ -79,6 +83,51 @@ async function searchInActiveTab(payload, searchType = "both") {
           .replace(/[\u0300-\u036f]/g, "")
           .replace(/\s+/g, " ")
           .trim();
+
+      const normalizeDigits = (value) => String(value || "").replace(/\D/g, "");
+
+      const buildDigitIndexMap = (text) => {
+        const positions = [];
+        for (let index = 0; index < text.length; index += 1) {
+          if (/\d/.test(text[index])) {
+            positions.push(index);
+          }
+        }
+        return positions;
+      };
+
+      const buildFlexibleDigitRegex = (digits) => {
+        const safeDigits = String(digits || "").replace(/\D/g, "");
+        if (!safeDigits) return null;
+        return new RegExp(safeDigits.split("").map((digit) => `${digit}\\D*`).join(""), "i");
+      };
+
+      const normalizeMoneyText = (value) => {
+        const text = String(value || "").trim();
+        if (!text) return "";
+        return text
+          .replace(/[^\d,.-]/g, "")
+          .replace(/(?<=\d),(?=\d{3}(\D|$))/g, "")
+          .replace(/,/g, ".")
+          .replace(/(\.\d{2})\d+$/, "$1");
+      };
+
+      const collectTableRows = () =>
+        Array.from(document.querySelectorAll("tr")).map((row) => {
+          const cells = Array.from(row.querySelectorAll("td, th")).map((cell) => ({
+            text: String(cell.textContent || "").trim(),
+            normalizedText: normalizeText(cell.textContent || ""),
+            digits: normalizeDigits(cell.textContent || ""),
+          }));
+
+          return {
+            row,
+            text: normalizeText(row.textContent || ""),
+            digits: normalizeDigits(row.textContent || ""),
+            money: cells.map((cell) => normalizeMoneyText(cell.text)).filter(Boolean),
+            cells,
+          };
+        });
 
       const cleanup = () => {
         document.querySelectorAll(`[${HIGHLIGHT_ATTR}="1"]`).forEach((node) => {
@@ -105,10 +154,31 @@ async function searchInActiveTab(payload, searchType = "both") {
 
       const highlightTerm = (term) => {
         const normalizedTerm = normalizeText(term);
+        const digitTerm = normalizeDigits(term);
+        const digitRegex = buildFlexibleDigitRegex(digitTerm);
+        const normalizedMoneyTerm = normalizeMoneyText(term);
         if (!normalizedTerm) return 0;
 
         clearPreviousHighlights();
         cleanup();
+
+        const rows = collectTableRows();
+        const matchingRows = rows.filter((entry) => {
+          if (entry.text.includes(normalizedTerm)) return true;
+          if (digitTerm && entry.digits.includes(digitTerm)) return true;
+          if (normalizedMoneyTerm && entry.money.some((moneyValue) => moneyValue === normalizedMoneyTerm)) {
+            return true;
+          }
+          return false;
+        });
+
+        if (matchingRows.length > 0) {
+          const firstRow = matchingRows[0].row;
+          firstRow.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+          firstRow.style.outline = "3px solid #f59e0b";
+          firstRow.style.background = "#fde68a";
+          return matchingRows.length;
+        }
 
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
@@ -138,15 +208,39 @@ async function searchInActiveTab(payload, searchType = "both") {
 
         nodes.forEach((node) => {
           const text = node.textContent || "";
-          const index = normalizeText(text).indexOf(normalizedTerm);
-          if (index < 0) return;
+          const normalizedNodeText = normalizeText(text);
+          const digitNodeText = normalizeDigits(text);
+          const exactMatch = normalizedNodeText.indexOf(normalizedTerm) >= 0;
+          const digitMatch = !!digitTerm && digitNodeText.indexOf(digitTerm) >= 0;
+          const flexibleDigitMatch = digitRegex ? digitRegex.exec(text) : null;
 
-          const startOffset = text.toLowerCase().indexOf(String(term).toLowerCase());
-          if (startOffset < 0) return;
+          let startOffset = text.toLowerCase().indexOf(String(term).toLowerCase());
+          let endOffset = startOffset >= 0 ? startOffset + String(term).length : -1;
+
+          if (startOffset < 0 && digitTerm) {
+            const digitIndex = digitNodeText.indexOf(digitTerm);
+            if (digitIndex >= 0) {
+              const digitMap = buildDigitIndexMap(text);
+              const startDigitPos = digitMap[digitIndex];
+              const endDigitPos = digitMap[digitIndex + digitTerm.length - 1];
+              if (startDigitPos !== undefined && endDigitPos !== undefined) {
+                startOffset = startDigitPos;
+                endOffset = endDigitPos + 1;
+              }
+            }
+          }
+
+          if (startOffset < 0 && flexibleDigitMatch) {
+            startOffset = flexibleDigitMatch.index;
+            endOffset = flexibleDigitMatch.index + flexibleDigitMatch[0].length;
+          }
+
+          if (!exactMatch && !digitMatch) return;
+          if (startOffset < 0 || endOffset < 0) return;
 
           const range = document.createRange();
           range.setStart(node, startOffset);
-          range.setEnd(node, startOffset + String(term).length);
+          range.setEnd(node, endOffset);
 
           const mark = document.createElement("mark");
           mark.setAttribute(HIGHLIGHT_ATTR, "1");
@@ -170,16 +264,23 @@ async function searchInActiveTab(payload, searchType = "both") {
       for (const term of terms) {
         const matches = highlightTerm(term);
         if (matches > 0) {
-          return { found: true, term, matches };
+          return { found: true, term, matches, frameUrl: window.location.href };
         }
       }
 
       clearPreviousHighlights();
       cleanup();
-      return { found: false, term: "", matches: 0 };
+      return { found: false, term: "", matches: 0, frameUrl: window.location.href };
     },
     args: [searchTerms],
   });
+
+  if (!frameResults?.length) {
+    return { ok: false, message: "No se pudo ejecutar la búsqueda." };
+  }
+
+  const result =
+    frameResults.find((entry) => entry?.result?.found)?.result || frameResults[0]?.result || null;
 
   if (!result) {
     return { ok: false, message: "No se pudo ejecutar la búsqueda." };
