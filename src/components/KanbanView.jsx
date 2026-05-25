@@ -373,6 +373,12 @@ const KanbanView = ({
     );
     const parsedAmountSearch = normalizeAmountInput(amountSearch);
     const normalizedBranchSearch = branchPersonSearch.toLowerCase().trim();
+    const selectedDateFilter =
+      filterDateOption === "specific"
+        ? specificDate
+        : filterDateOption === "today"
+          ? toLocalISOString(new Date())
+          : null;
 
     const filtered = deposits.filter((deposit) => {
       const lowerCaseSearchTerm = debouncedSearchTerm.toLowerCase();
@@ -440,10 +446,10 @@ const KanbanView = ({
         (deposit.trabajador?.telefono_origen &&
           deposit.trabajador.telefono_origen.toLowerCase().includes(normalizedBranchSearch));
 
-      // NOTA: Ya NO filtramos por fecha aquí porque la BD ya trae solo los depósitos
-      // de la fecha específica solicitada (ver useEffect que llama onFetchDepositsByDate)
+      const matchesDate =
+        !selectedDateFilter || deposit.fecha_solo_date === selectedDateFilter;
 
-      return matchesSearch && matchesAmount && matchesBranchPerson;
+      return matchesDate && matchesSearch && matchesAmount && matchesBranchPerson;
     });
 
     console.log(
