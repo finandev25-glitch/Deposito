@@ -3661,6 +3661,7 @@ export function registerDepositSseRoute(app) {
       clients: clients.size,
       realtime: !!realtimeWorker,
       realtimeStatus,
+      buildSha: process.env.GIT_SHA || "local",
     });
   });
 }

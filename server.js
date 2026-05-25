@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const GIT_SHA = process.env.GIT_SHA || "local";
 
 app.use(express.json({ limit: "10mb" }));
 registerRequestLogger(app);
@@ -31,4 +32,5 @@ app.use((req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor corriendo en http://0.0.0.0:${PORT}`);
   console.log(`🔴 SSE depositos: /api/events/depositos`);
+  console.log(`📦 Build SHA: ${GIT_SHA}`);
 });
