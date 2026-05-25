@@ -114,7 +114,7 @@ export const generateMockDeposits = (count = 100, personal = [], users = []) => 
     const isPdf = Math.random() > 0.8;
     const voucherUrl = isPdf
       ? 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
-      : `https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://placehold.co/400x600.jpg?text=Voucher\\n${faker.string.alphanumeric(8).toUpperCase()}`;
+      : `https://placehold.co/400x600.jpg?text=Voucher%0A${faker.string.alphanumeric(8).toUpperCase()}`;
 
     const trabajador = personal.length > 0 ? faker.helpers.arrayElement(personal) : null;
     const isProcessed = ['en_validacion', 'validado', 'rechazado'].includes(estado);

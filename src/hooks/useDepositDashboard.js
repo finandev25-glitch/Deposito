@@ -168,12 +168,19 @@ export function useDepositDashboard() {
   const handleRealtimeUpdate = useCallback(
     (updatedDepositsOrNull, deletedId) => {
       if (Array.isArray(updatedDepositsOrNull) && updatedDepositsOrNull.length > 0) {
+        console.log("🔄 REALTIME: Actualizando estado deposits...", {
+          count: updatedDepositsOrNull.length,
+          firstId: updatedDepositsOrNull[0]?.id,
+        });
         setDeposits((prev) => mergeDepositsIntoView(prev, updatedDepositsOrNull));
+        console.log("✅ REALTIME: Estado actualizado");
         return;
       }
 
       if (deletedId) {
+        console.log("🗑️ REALTIME: Eliminando depósito del estado:", deletedId);
         setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
+        console.log("✅ REALTIME: Estado actualizado");
       }
     },
     [mergeDepositsIntoView]

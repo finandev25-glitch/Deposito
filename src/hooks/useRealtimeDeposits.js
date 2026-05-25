@@ -47,6 +47,11 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
       const recordIds = [...new Set(updateQueueRef.current.map((item) => item.id))];
       updateQueueRef.current = [];
 
+      console.log("📡 REALTIME: Consultando depósito completo...", {
+        recordIds,
+        query: queryStringRef.current,
+      });
+
       let attempts = 0;
       const maxAttempts = 3;
       let success = false;
@@ -67,7 +72,14 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
 
           if (error) throw error;
 
+          console.log("📦 REALTIME: Respuesta de query:", {
+            hasData: !!updatedDeposits?.length,
+            hasError: false,
+            depositIds: recordIds,
+          });
+
           if (updatedDeposits && updatedDeposits.length > 0) {
+            console.log("✅ REALTIME: Depósito completo obtenido con relaciones:", updatedDeposits[0]);
             onUpdateRef.current(updatedDeposits);
           }
 
@@ -93,8 +105,13 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
 
     const handleRealtimeChange = (payload) => {
       const { eventType, new: newRecord, old: oldRecord } = payload;
+      const recordId = newRecord?.id || oldRecord?.id;
+
+      console.log(`📨 REALTIME: Cambio detectado en depositos: ${eventType}`);
+      console.log("📦 REALTIME: Payload completo:", payload);
 
       if (eventType === "INSERT" || eventType === "UPDATE") {
+        console.log("🔄 REALTIME: Depósito actualizado:", recordId);
         updateQueueRef.current.push({ id: newRecord.id, event: eventType });
 
         if (processingTimeoutRef.current) {
@@ -105,6 +122,7 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
           executeBatchQuery();
         }, BATCH_DELAY_MS);
       } else if (eventType === "DELETE") {
+        console.log("🗑️ REALTIME: Depósito eliminado:", recordId);
         onUpdateRef.current(null, oldRecord.id);
       }
     };
@@ -154,6 +172,7 @@ export const useRealtimeDeposits = (isSupabaseConnected, currentUser, onUpdate, 
           setRealtimeStatus(status);
 
           if (status === "SUBSCRIBED") {
+            console.log("✅ REALTIME: Canal suscrito a depositos");
             setRealtimeErrors(0);
             return;
           }

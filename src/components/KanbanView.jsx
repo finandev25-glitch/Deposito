@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { toLocalISOString } from "../utils/dateFormatters";
+import ConnectionIndicator from "./ConnectionIndicator";
 import {
   saveOpenDepositId,
   clearOpenDepositId,
@@ -52,6 +53,33 @@ const ColumnContent = ({ deposits, onCardClick }) => {
   );
 };
 
+const normalizeAmountInput = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const cleaned = raw.replace(/[^\d,.-]/g, "");
+  if (!cleaned) return null;
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      normalized = cleaned.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = cleaned.replace(/,/g, "");
+    }
+  } else if (lastComma >= 0) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else {
+    normalized = cleaned.replace(/,/g, "");
+  }
+
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 const KanbanView = ({
   deposits,
   onUpdateDeposit,
@@ -64,6 +92,7 @@ const KanbanView = ({
   bancos,
   cuentas,
   onOpenVoucherWindow,
+  connectionStatus,
 }) => {
   const { currentUser } = useContext(AuthContext);
   const [searchTerm, setSearchTerm] = useState("");
@@ -328,7 +357,7 @@ const KanbanView = ({
       "📅 KANBAN: Fechas disponibles (primeros 5):",
       fechasDisponibles,
     );
-    const normalizedAmountSearch = amountSearch.replace(/\s+/g, "").replace(",", ".").trim();
+    const parsedAmountSearch = normalizeAmountInput(amountSearch);
     const normalizedBranchSearch = branchPersonSearch.toLowerCase().trim();
 
     const filtered = deposits.filter((deposit) => {
@@ -373,15 +402,22 @@ const KanbanView = ({
           deposit.monto.toString().includes(lowerCaseSearchTerm)) ||
         formattedDateTime.includes(lowerCaseSearchTerm);
 
+      const montoValue = Number(deposit.monto);
+      const searchAmountText = amountSearch.trim();
       const montoText = deposit.monto != null ? String(deposit.monto) : "";
-      const montoFormatted = Number(deposit.monto || 0).toLocaleString("es-ES", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
+      const montoFormatted = Number.isFinite(montoValue)
+        ? montoValue.toLocaleString("es-ES", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })
+        : "";
       const matchesAmount =
-        !normalizedAmountSearch ||
-        montoText.includes(normalizedAmountSearch) ||
-        montoFormatted.includes(normalizedAmountSearch);
+        parsedAmountSearch == null ||
+        (Number.isFinite(montoValue) &&
+          (montoValue === parsedAmountSearch ||
+            montoText.includes(searchAmountText) ||
+            montoFormatted.includes(searchAmountText) ||
+            montoValue.toFixed(2).includes(parsedAmountSearch.toFixed(2))));
 
       const matchesBranchPerson =
         !normalizedBranchSearch ||
@@ -562,6 +598,16 @@ const KanbanView = ({
               Visualiza y gestiona el estado de los depósitos.
             </p>
           </div>
+
+          {connectionStatus && (
+            <div className="rounded-full border border-gray-200 bg-white/80 px-3 py-2 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/80">
+              <ConnectionIndicator
+                supabaseConnected={connectionStatus.supabaseConnected}
+                realtimeStatus={connectionStatus.realtimeStatus}
+                realtimeErrors={connectionStatus.realtimeErrors}
+              />
+            </div>
+          )}
 
           {/* Botón Contactos junto al título */}
           <button

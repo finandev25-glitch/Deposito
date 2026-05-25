@@ -201,6 +201,11 @@ function App() {
                   bancos={bancos}
                   cuentas={cuentas}
                   onOpenVoucherWindow={handleOpenVoucherWindow}
+                  connectionStatus={{
+                    supabaseConnected: isSupabaseConnected,
+                    realtimeStatus,
+                    realtimeErrors,
+                  }}
                 />
               }
             />

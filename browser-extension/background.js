@@ -22,6 +22,11 @@ function normalizeDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function normalizeOperationNumber(value) {
+  const digits = normalizeDigits(value).replace(/^0+(?=\d)/, "");
+  return digits || "0";
+}
+
 function buildSearchVariants(payload, searchType = "both") {
   const variants = [];
   const add = (value) => {
@@ -35,8 +40,17 @@ function buildSearchVariants(payload, searchType = "both") {
   const shouldSearchAmount = searchType === "amount" || searchType === "both";
 
   if (shouldSearchOperation) {
-    add(payload?.numero_operacion_solicitante);
-    add(payload?.numero_operacion_banco);
+    const solicitante = payload?.numero_operacion_solicitante;
+    const banco = payload?.numero_operacion_banco;
+
+    add(solicitante);
+    add(banco);
+
+    const normalizedSolicitante = normalizeOperationNumber(solicitante);
+    const normalizedBanco = normalizeOperationNumber(banco);
+
+    add(normalizedSolicitante);
+    add(normalizedBanco);
   }
 
   if (shouldSearchAmount) {

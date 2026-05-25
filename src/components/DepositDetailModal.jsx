@@ -40,6 +40,9 @@ import {
 import RejectionModal from "./RejectionModal";
 import GoogleDrivePicker from "./GoogleDrivePicker.jsx";
 
+const FALLBACK_VOUCHER_PREVIEW =
+  "https://placehold.co/600x400/e2e8f0/e2e8f0?text=Voucher";
+
 const getStatusInfo = (estado) => {
   switch (estado) {
     case "pendiente":
@@ -2237,7 +2240,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                       <img
                         src={
                           displayVoucherUrl ||
-                          "https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://img-wrapper.vercel.app/image?url=https://placehold.co/600x400/e2e8f0/e2e8f0?text=."
+                          FALLBACK_VOUCHER_PREVIEW
                         }
                         alt={`Voucher ${deposit.numero_voucher}`}
                         className="w-full h-full object-contain rounded-md pointer-events-none lg:pointer-events-auto"

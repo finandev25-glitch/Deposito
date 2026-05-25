@@ -138,6 +138,14 @@ function normalizeSearchValue(value) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeOperationNumber(value) {
+  const digits = String(value || "")
+    .trim()
+    .replace(/\D/g, "")
+    .replace(/^0+(?=\d)/, "");
+  return digits || "0";
+}
+
 function formatAmount(value) {
   if (value === undefined || value === null || value === "") return "-";
   const numericAmount = Number(String(value).replace(/[^0-9,.-]/g, "").replace(",", "."));
@@ -156,8 +164,13 @@ function buildSearchVariants(payload) {
     }
   };
 
-  add(payload?.numero_operacion_solicitante);
-  add(payload?.numero_operacion_banco);
+  const solicitante = payload?.numero_operacion_solicitante;
+  const banco = payload?.numero_operacion_banco;
+
+  add(solicitante);
+  add(banco);
+  add(normalizeOperationNumber(solicitante));
+  add(normalizeOperationNumber(banco));
 
   const amount = payload?.monto;
   if (amount !== undefined && amount !== null && amount !== "") {
