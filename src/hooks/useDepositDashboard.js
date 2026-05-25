@@ -63,6 +63,8 @@ export function useDepositDashboard() {
   const currentSelectedDateRef = useRef(currentSelectedDate);
   const lastQueryRef = useRef({ type: null, value: null });
   const realtimeChannelRef = useRef(null);
+  const kanbanRealtimeQueueRef = useRef([]);
+  const kanbanRealtimeTimerRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
 
   useEffect(() => {
@@ -168,6 +170,34 @@ export function useDepositDashboard() {
     },
     [location.pathname, mergeDepositsIntoView]
   );
+
+  const applyKanbanRealtimeUpdates = useCallback(async () => {
+    if (!kanbanRealtimeQueueRef.current.length) return;
+
+    const queued = [...kanbanRealtimeQueueRef.current];
+    kanbanRealtimeQueueRef.current = [];
+
+    const uniqueIds = [...new Set(queued.filter((item) => item.id).map((item) => item.id))];
+    const deleteIds = queued.filter((item) => item.eventType === "DELETE" && item.id).map((item) => item.id);
+
+    if (deleteIds.length > 0) {
+      setDeposits((prev) => prev.filter((deposit) => !deleteIds.includes(deposit.id)));
+    }
+
+    if (uniqueIds.length === 0) return;
+
+    try {
+      const data = await apiJson(`/depositos?ids=${encodeURIComponent(uniqueIds.join(","))}`);
+      const updatedDeposits = data.data || [];
+
+      if (updatedDeposits.length > 0) {
+        setDeposits((prev) => mergeDepositsIntoView(prev, updatedDeposits));
+      }
+    } catch (error) {
+      console.error("Error actualizando Kanban realtime:", error);
+      await refreshDeposits();
+    }
+  }, [mergeDepositsIntoView, refreshDeposits]);
 
   const fetchData = useCallback(async (showLoading = true) => {
     if (showLoading) {
@@ -543,6 +573,11 @@ export function useDepositDashboard() {
         supabase?.removeChannel?.(realtimeChannelRef.current);
         realtimeChannelRef.current = null;
       }
+      if (kanbanRealtimeTimerRef.current) {
+        clearTimeout(kanbanRealtimeTimerRef.current);
+        kanbanRealtimeTimerRef.current = null;
+      }
+      kanbanRealtimeQueueRef.current = [];
       return;
     }
 
@@ -557,12 +592,25 @@ export function useDepositDashboard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "depositos" },
-        async () => {
-          try {
-            await refreshDeposits();
-          } catch (error) {
-            console.error("Error refrescando Kanban tras realtime de Supabase:", error);
+        (payload) => {
+          const eventType = payload?.eventType;
+          const recordId = payload?.new?.id || payload?.old?.id;
+
+          if (!recordId) return;
+
+          kanbanRealtimeQueueRef.current.push({
+            id: recordId,
+            eventType,
+          });
+
+          if (kanbanRealtimeTimerRef.current) {
+            clearTimeout(kanbanRealtimeTimerRef.current);
           }
+
+          kanbanRealtimeTimerRef.current = setTimeout(() => {
+            kanbanRealtimeTimerRef.current = null;
+            applyKanbanRealtimeUpdates();
+          }, 120);
         }
       )
       .subscribe((status, error) => {
@@ -581,9 +629,14 @@ export function useDepositDashboard() {
       if (realtimeChannelRef.current === channel) {
         realtimeChannelRef.current = null;
       }
+      if (kanbanRealtimeTimerRef.current) {
+        clearTimeout(kanbanRealtimeTimerRef.current);
+        kanbanRealtimeTimerRef.current = null;
+      }
+      kanbanRealtimeQueueRef.current = [];
       supabase.removeChannel(channel);
     };
-  }, [currentUser, isSupabaseConnected, location.pathname, refreshDeposits]);
+  }, [applyKanbanRealtimeUpdates, currentUser, isSupabaseConnected, location.pathname]);
 
   useEffect(() => {
     if (!currentUser || !isSupabaseConnected) {
