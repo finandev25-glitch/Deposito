@@ -3475,14 +3475,28 @@ function broadcastDepositChange(eventType, row, oldRow = null, meta = {}) {
   broadcast(event);
 }
 
+function summarizeRealtimeError(error) {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message || error.name || "Error";
+  if (typeof error === "object") {
+    return error.message || error.reason || error.code || error.status || "realtime error";
+  }
+  return String(error);
+}
+
 function setRealtimeStatus(status, error = null) {
+  if (realtimeStatus === status && status !== "SUBSCRIBED") {
+    return;
+  }
+
   realtimeStatus = status;
   if (status === "SUBSCRIBED") {
     console.log("Backend realtime conectado a depositos");
   } else if (status === "CHANNEL_ERROR") {
-    console.error("Backend realtime error:", error);
+    console.error("Backend realtime error:", summarizeRealtimeError(error));
   } else if (status === "TIMED_OUT") {
-    console.warn("Backend realtime timeout:", error || "");
+    console.warn("Backend realtime timeout:", summarizeRealtimeError(error));
   } else if (status === "CLOSED") {
     console.warn("Backend realtime canal cerrado");
   }
