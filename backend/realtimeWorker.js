@@ -36,6 +36,12 @@ const client = createClient(supabaseUrl, serviceRoleKey, {
   },
 });
 
+console.log("[realtime-worker] boot", {
+  pid: process.pid,
+  supabaseUrl: !!supabaseUrl,
+  serviceRoleKey: !!serviceRoleKey,
+});
+
 const channel = client
   .channel("backend-depositos-realtime")
   .on(

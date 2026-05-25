@@ -3579,6 +3579,7 @@ export function startDepositRealtimeHub() {
   });
 
   realtimeWorker = worker;
+  console.log("Backend realtime worker spawned", { pid: worker.pid });
   realtimeWorker.on("message", handleRealtimeWorkerMessage);
   realtimeWorker.on("error", (error) => {
     console.error("Backend realtime worker error:", summarizeRealtimeError(error));
