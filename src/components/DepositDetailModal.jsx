@@ -459,7 +459,7 @@ const DepositDetailModal = ({
   };
 
   const handleCheckDuplicates = async () => {
-    console.log('?? Iniciando comprobaci?n de duplicados...', {
+    console.log("Iniciando comprobación de duplicados...", {
       numero_operacion: editableData.numero_operacion_banco,
       monto: editableData.monto,
       fecha_deposito: editableData.fecha_deposito,
@@ -467,7 +467,7 @@ const DepositDetailModal = ({
     });
 
     setIsChecking(true);
-    setCheckResult({ checked: false, isDuplicate: false, message: '' });
+    setCheckResult({ checked: false, isDuplicate: false, message: "" });
 
     if (!editableData.numero_operacion_banco || !editableData.monto || !editableData.moneda) {
       setCheckResult({
@@ -481,12 +481,12 @@ const DepositDetailModal = ({
     }
 
     if (!isBackendConnected) {
-      console.log('??  Modo simulado: comprobaci?n de duplicados no disponible');
+      console.log("Modo simulado: comprobación de duplicados no disponible");
       setTimeout(() => {
         setCheckResult({
           checked: true,
           isDuplicate: false,
-          message: 'Comprobaci?n de duplicados no disponible en modo simulado.',
+          message: "Comprobación de duplicados no disponible en modo simulado.",
         });
         setIsChecking(false);
       }, 500);
@@ -504,7 +504,7 @@ const DepositDetailModal = ({
       const duplicates = response.duplicates || [];
 
       if (response.error) {
-        console.error('? Error en consulta backend:', response.error);
+        console.error('Error en consulta backend:', response.error);
         setCheckResult({
           checked: true,
           isDuplicate: true,
@@ -519,22 +519,24 @@ const DepositDetailModal = ({
         setCheckResult({
           checked: true,
           isDuplicate: true,
-          message: response.message || ('?Alerta de Duplicado! Se encontraron ' + duplicates.length + ' dep?sito(s) con los mismos datos.'),
+          message:
+            response.message ||
+            `Alerta de duplicado: se encontraron ${duplicates.length} depósito(s) con los mismos datos.`,
         });
       } else {
         setDuplicateDeposits([]);
         setCheckResult({
           checked: true,
           isDuplicate: false,
-          message: response.message || 'No se encontraron duplicados. Puede confirmar el dep?sito.',
+          message: response.message || "No se encontraron duplicados. Puede confirmar el depósito.",
         });
       }
     } catch (criticalError) {
-      console.error('?? Error cr?tico en comprobaci?n de duplicados:', criticalError);
+      console.error("Error crítico en comprobación de duplicados:", criticalError);
       setCheckResult({
         checked: true,
         isDuplicate: true,
-        message: 'Error cr?tico: ' + criticalError.message,
+        message: "Error crítico: " + criticalError.message,
       });
     } finally {
       setIsChecking(false);

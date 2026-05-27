@@ -32,10 +32,14 @@
       "matches": [
         "http://localhost:*/*",
         "http://127.0.0.1:*/*",
-        "https://*.gnfcio.easypanel.host/*"
-        ,
+        "https://*.gnfcio.easypanel.host/*",
         "https://www.bbvanetcash.pe/*",
-        "https://*.bbvanetcash.pe/*"
+        "https://*.bbvanetcash.pe/*",
+        "https://www.tlcbcp.com/*",
+        "https://tlcbcp.com/*",
+        "https://*.tlcbcp.com/*",
+        "https://empresas.interbank.pe/*",
+        "https://*.interbank.pe/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_idle"
