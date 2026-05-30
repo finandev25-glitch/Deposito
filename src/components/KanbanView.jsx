@@ -16,7 +16,6 @@ import {
   ChevronDown,
   Calendar,
   MessageCircle,
-  Bell,
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { toLocalISOString } from "../utils/dateFormatters";
@@ -28,7 +27,7 @@ import {
   PERSISTENCE_CONFIG,
 } from "../utils/persistenceHelpers";
 
-const ColumnContent = ({ deposits, onCardClick }) => {
+const ColumnContent = ({ deposits, onCardClick, selectedDepositId }) => {
   if (!deposits || deposits.length === 0) {
     return (
       <div className="text-center text-gray-500 dark:text-gray-400 py-8 px-4">
@@ -47,7 +46,11 @@ const ColumnContent = ({ deposits, onCardClick }) => {
           exit={{ opacity: 0, scale: 0.9 }}
           transition={{ duration: 0.2 }}
         >
-          <DepositCard deposit={deposit} onClick={() => onCardClick(deposit)} />
+          <DepositCard
+            deposit={deposit}
+            onClick={() => onCardClick(deposit)}
+            isSelected={selectedDepositId === deposit.id}
+          />
         </motion.div>
       ))}
     </AnimatePresence>
@@ -94,7 +97,9 @@ const KanbanView = ({
   cuentas,
   onOpenVoucherWindow,
   connectionStatus,
+  showConnectionStatus = true,
   realtimeActivity,
+  detailPresentationMode = "default",
 }) => {
   const { currentUser } = useContext(AuthContext);
   const [searchTerm, setSearchTerm] = useState("");
@@ -125,7 +130,7 @@ const KanbanView = ({
 
   // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
-  const [visibleRealtimeActivity, setVisibleRealtimeActivity] = useState(null);
+  const isCompactKanban = detailPresentationMode === "compact";
 
   // Fetch deposits cuando cambia la fecha específica (incluyendo montaje inicial)
   useEffect(() => {
@@ -327,17 +332,6 @@ const KanbanView = ({
 
     return () => clearTimeout(timer);
   }, [searchTerm]);
-
-  useEffect(() => {
-    if (!realtimeActivity) return;
-
-    setVisibleRealtimeActivity(realtimeActivity);
-    const timer = setTimeout(() => {
-      setVisibleRealtimeActivity(null);
-    }, 3500);
-
-    return () => clearTimeout(timer);
-  }, [realtimeActivity]);
 
   const columns = [
     { id: "pendiente", title: "Pendiente", color: "bg-orange-400" },
@@ -619,7 +613,7 @@ const KanbanView = ({
             </p>
           </div>
 
-          {connectionStatus && (
+          {showConnectionStatus && connectionStatus && (
             <div className="rounded-full border border-gray-200 bg-white/80 px-3 py-2 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/80">
               <ConnectionIndicator
                 supabaseConnected={connectionStatus.supabaseConnected}
@@ -640,114 +634,129 @@ const KanbanView = ({
           </button>
         </div>
 
-        <AnimatePresence>
-          {visibleRealtimeActivity && (
-            <motion.div
-              initial={{ opacity: 0, y: -10, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -10, scale: 0.98 }}
-              className="mb-4 inline-flex items-center gap-2 self-start rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 shadow-sm dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200"
-            >
-              <Bell size={14} />
-              <span className="font-medium">
-                {visibleRealtimeActivity.type === "delete"
-                  ? `Realtime: 1 depósito eliminado`
-                  : `Realtime: ${visibleRealtimeActivity.count} depósito${visibleRealtimeActivity.count === 1 ? "" : "s"} actualizado${visibleRealtimeActivity.count === 1 ? "" : "s"}`}
-              </span>
-              <span className="text-xs text-blue-600 dark:text-blue-300">
-                {new Date(visibleRealtimeActivity.at).toLocaleTimeString("es-PE", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })}
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* Filtros y búsqueda en una segunda línea */}
         <div className="flex flex-wrap items-center gap-4 mb-6 flex-shrink-0">
-          <div className="relative">
-            <Calendar
-              size={12}
-              className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-            />
-            <select
-              value={filterDateOption}
-              onChange={(e) => setFilterDateOption(e.target.value)}
-              className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-            >
-              <option value="all">Cualquier fecha</option>
-              <option value="today">Hoy</option>
-              <option value="specific">Fecha específica</option>
-            </select>
-          </div>
-
-          <div className="relative">
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="Importe..."
-              value={amountSearch}
-              onChange={(e) => setAmountSearch(e.target.value)}
-              className="w-full md:w-40 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-            />
-          </div>
-
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Persona sucursal..."
-              value={branchPersonSearch}
-              onChange={(e) => setBranchPersonSearch(e.target.value)}
-              className="w-full md:w-56 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-            />
-          </div>
-
-          <AnimatePresence>
-            {filterDateOption === "specific" && (
-              <motion.div
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: "auto" }}
-                exit={{ opacity: 0, width: 0 }}
-                className="relative"
-                transition={{ duration: 0.2 }}
-              >
+          {isCompactKanban ? (
+            <>
+              <div className="relative">
+                <Calendar
+                  size={12}
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                />
                 <input
                   type="date"
                   value={specificDate}
                   onChange={(e) => {
                     const newDate = e.target.value;
                     console.log("📅 INPUT: Usuario seleccionó fecha:", newDate);
-                    console.log("📅 INPUT: Fecha anterior era:", specificDate);
-                    console.log(
-                      "📅 INPUT: onFetchDepositsByDate disponible:",
-                      !!onFetchDepositsByDate,
-                    );
                     setSpecificDate(newDate);
                     if (onSelectDate) {
                       onSelectDate(newDate || null);
                     }
                   }}
-                  className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                  className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
                 />
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
 
-          <div className="relative ml-auto">
-            <Search
-              size={14}
-              className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-            />
-            <input
-              type="text"
-              placeholder="Buscar..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full md:w-56 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-            />
-          </div>
+              <div className="relative ml-auto">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Buscar..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full md:w-56 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="relative">
+                <Calendar
+                  size={12}
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                />
+                <select
+                  value={filterDateOption}
+                  onChange={(e) => setFilterDateOption(e.target.value)}
+                  className="w-full md:w-auto pl-9 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                >
+                  <option value="all">Cualquier fecha</option>
+                  <option value="today">Hoy</option>
+                  <option value="specific">Fecha específica</option>
+                </select>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Importe..."
+                  value={amountSearch}
+                  onChange={(e) => setAmountSearch(e.target.value)}
+                  className="w-full md:w-40 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                />
+              </div>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Persona sucursal..."
+                  value={branchPersonSearch}
+                  onChange={(e) => setBranchPersonSearch(e.target.value)}
+                  className="w-full md:w-56 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                />
+              </div>
+
+              <AnimatePresence>
+                {filterDateOption === "specific" && (
+                  <motion.div
+                    initial={{ opacity: 0, width: 0 }}
+                    animate={{ opacity: 1, width: "auto" }}
+                    exit={{ opacity: 0, width: 0 }}
+                    className="relative"
+                    transition={{ duration: 0.2 }}
+                  >
+                    <input
+                      type="date"
+                      value={specificDate}
+                      onChange={(e) => {
+                        const newDate = e.target.value;
+                        console.log("📅 INPUT: Usuario seleccionó fecha:", newDate);
+                        console.log("📅 INPUT: Fecha anterior era:", specificDate);
+                        console.log(
+                          "📅 INPUT: onFetchDepositsByDate disponible:",
+                          !!onFetchDepositsByDate,
+                        );
+                        setSpecificDate(newDate);
+                        if (onSelectDate) {
+                          onSelectDate(newDate || null);
+                        }
+                      }}
+                      className="w-full md:w-auto px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="relative ml-auto">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Buscar..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full md:w-56 pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Mobile Accordion View */}
@@ -755,10 +764,10 @@ const KanbanView = ({
           {columns.map((column, index) => (
             <details
               key={column.id}
-              className="bg-gray-100/70 dark:bg-gray-900/70 rounded-xl overflow-hidden group"
+              className="group overflow-hidden rounded-xl border border-gray-200/80 bg-gray-100/70 shadow-sm transition-shadow hover:shadow-md dark:border-gray-700/80 dark:bg-gray-900/70"
               open={index === 0}
             >
-              <summary className="p-4 flex items-center justify-between cursor-pointer list-none">
+              <summary className="flex cursor-pointer list-none items-center justify-between p-4">
                 <h3 className="font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
                   <span
                     className={`w-2.5 h-2.5 rounded-full ${column.color}`}
@@ -802,6 +811,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={validacionSeparated.normales}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -831,6 +841,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={validacionSeparated.antiguos}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -843,6 +854,7 @@ const KanbanView = ({
                         <ColumnContent
                           deposits={[]}
                           onCardClick={handleCardClick}
+                          selectedDepositId={selectedDeposit?.id}
                         />
                       )}
                   </>
@@ -876,6 +888,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={pendientesSeparated.especiales}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -908,6 +921,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={pendientesSeparated.otros}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -920,6 +934,7 @@ const KanbanView = ({
                         <ColumnContent
                           deposits={[]}
                           onCardClick={handleCardClick}
+                          selectedDepositId={selectedDeposit?.id}
                         />
                       )}
                   </>
@@ -927,6 +942,7 @@ const KanbanView = ({
                   <ColumnContent
                     deposits={groupedDeposits[column.id]}
                     onCardClick={handleCardClick}
+                    selectedDepositId={selectedDeposit?.id}
                   />
                 )}
               </div>
@@ -939,9 +955,9 @@ const KanbanView = ({
           {columns.map((column) => (
             <div
               key={column.id}
-              className="bg-gray-100/70 dark:bg-gray-900 rounded-xl flex flex-col overflow-hidden"
+              className="flex flex-col overflow-hidden rounded-xl border border-gray-200/80 bg-gray-100/70 shadow-sm transition-shadow hover:shadow-md dark:border-gray-700/80 dark:bg-gray-900"
             >
-              <div className="p-4 flex-shrink-0 border-b border-gray-200 dark:border-gray-800">
+              <div className="flex-shrink-0 border-b border-gray-200/80 p-4 dark:border-gray-700/80">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
                     <span
@@ -981,6 +997,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={validacionSeparated.normales}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -1010,6 +1027,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={validacionSeparated.antiguos}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -1022,6 +1040,7 @@ const KanbanView = ({
                         <ColumnContent
                           deposits={[]}
                           onCardClick={handleCardClick}
+                          selectedDepositId={selectedDeposit?.id}
                         />
                       )}
                   </>
@@ -1055,6 +1074,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={pendientesSeparated.especiales}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -1087,6 +1107,7 @@ const KanbanView = ({
                             <ColumnContent
                               deposits={pendientesSeparated.otros}
                               onCardClick={handleCardClick}
+                              selectedDepositId={selectedDeposit?.id}
                             />
                           </div>
                         )}
@@ -1099,6 +1120,7 @@ const KanbanView = ({
                         <ColumnContent
                           deposits={[]}
                           onCardClick={handleCardClick}
+                          selectedDepositId={selectedDeposit?.id}
                         />
                       )}
                   </>
@@ -1106,6 +1128,7 @@ const KanbanView = ({
                   <ColumnContent
                     deposits={groupedDeposits[column.id]}
                     onCardClick={handleCardClick}
+                    selectedDepositId={selectedDeposit?.id}
                   />
                 )}
               </div>
@@ -1123,6 +1146,7 @@ const KanbanView = ({
             bancos={bancos}
             cuentas={cuentas}
             onOpenVoucherWindow={onOpenVoucherWindow}
+            presentationMode={detailPresentationMode}
           />
         )}
         {showContactosModal && (

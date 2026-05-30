@@ -6,6 +6,7 @@
   "description": "Panel lateral persistente para ver el voucher y los datos clave del depósito.",
   "permissions": ["sidePanel", "storage", "tabs", "scripting", "activeTab", "windows"],
   "host_permissions": [
+    "http://*:*/*",
     "http://localhost:*/*",
     "http://127.0.0.1:*/*",
     "https://*.gnfcio.easypanel.host/*",
@@ -15,7 +16,9 @@
     "https://tlcbcp.com/*",
     "https://*.tlcbcp.com/*",
     "https://empresas.interbank.pe/*",
-    "https://*.interbank.pe/*"
+    "https://*.interbank.pe/*",
+    "https://bancainternetempresas.scotiabank.com.pe/*",
+    "https://*.scotiabank.com.pe/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -39,7 +42,9 @@
         "https://tlcbcp.com/*",
         "https://*.tlcbcp.com/*",
         "https://empresas.interbank.pe/*",
-        "https://*.interbank.pe/*"
+        "https://*.interbank.pe/*",
+        "https://bancainternetempresas.scotiabank.com.pe/*",
+        "https://*.scotiabank.com.pe/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_idle"

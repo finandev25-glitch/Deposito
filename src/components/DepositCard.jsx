@@ -3,7 +3,7 @@ import { Building2, Calendar, CreditCard, User, Phone } from "lucide-react";
 import { getStatusIcon, getStatusInfo } from "../utils/depositStatusHelpers";
 import { formatDate, formatShortDateFromDateOnly } from "../utils/dateFormatters";
 
-const DepositCard = ({ deposit, onClick }) => {
+const DepositCard = ({ deposit, onClick, isSelected = false }) => {
   const [elapsedTime, setElapsedTime] = useState("");
 
   useEffect(() => {
@@ -64,6 +64,10 @@ const DepositCard = ({ deposit, onClick }) => {
           : `${statusStyles.borderColor} ${statusStyles.gradient} ${statusStyles.shadow}`
       } p-2.5 transition-all duration-300 cursor-pointer flex flex-col h-full ${
         isOldDeposit ? "ring-2 ring-orange-300 dark:ring-orange-600" : ""
+      } ${
+        isSelected
+          ? "ring-2 ring-emerald-300 shadow-[0_0_0_1px_rgba(34,197,94,0.18),0_0_22px_rgba(34,197,94,0.35)] dark:ring-emerald-400 dark:shadow-[0_0_0_1px_rgba(74,222,128,0.22),0_0_24px_rgba(74,222,128,0.28)]"
+          : ""
       }`}
     >
       {/* Header */}

@@ -34,3 +34,5 @@ Extensión de navegador para mostrar el voucher y los datos clave del depósito 
 - Estado
 - Sucursal
 - Banco
+
+> Si el backend corre en otra PC de la LAN, define `VITE_API_BASE_URL` con la IP o dominio real antes de compilar la extensión.

@@ -78,15 +78,19 @@ export const useRealtimeDeposits = (
               .from("depositos")
               .select(queryStringRef.current)
               .eq("id", recordId)
-              .single();
+              .limit(1);
 
             const timeoutPromise = new Promise((_, reject) =>
               setTimeout(() => reject(new Error("Timeout en query realtime")), 10000)
             );
 
-            const { data: fullDeposit, error } = await Promise.race([queryPromise, timeoutPromise]);
+            const { data: fullDepositRows, error } = await Promise.race([queryPromise, timeoutPromise]);
 
             if (error) throw error;
+
+            const fullDeposit = Array.isArray(fullDepositRows)
+              ? fullDepositRows[0] || null
+              : fullDepositRows || null;
 
             console.log("✅ REALTIME: Depósito completo obtenido con relaciones:", {
               id: fullDeposit?.id,

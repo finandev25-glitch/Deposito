@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Sistema de Control de Depósitos - Full Side Panel",
+  "version": "1.0.0",
+  "description": "Versión completa del sistema de control de depósitos en un panel lateral del navegador.",
+  "permissions": ["sidePanel", "storage", "tabs", "scripting", "activeTab", "windows"],
+  "host_permissions": [
+    "http://*:*/*",
+    "https://*:*/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Abrir panel lateral"
+  },
+  "side_panel": {
+    "default_path": "extension.html"
+  }
+}

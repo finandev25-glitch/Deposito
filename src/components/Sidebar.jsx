@@ -28,6 +28,7 @@ import {
 const SidebarContent = ({
   isCollapsed,
   setIsMobileMenuOpen,
+  compactMode = false,
 }) => {
   const { currentUser, logout } = useContext(AuthContext);
   const { theme, toggleTheme } = useTheme();
@@ -83,7 +84,11 @@ const SidebarContent = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white border-r border-gray-200 dark:bg-gray-900 dark:border-gray-800">
+    <div
+      className={`flex flex-col h-full bg-white border-r border-gray-200 dark:bg-gray-900 dark:border-gray-800 ${
+        compactMode ? "text-[0.95rem]" : ""
+      }`}
+    >
       {/* Header */}
       <div
         className={`flex items-center p-4 border-b border-gray-200 dark:border-gray-800 ${
@@ -245,6 +250,7 @@ const Sidebar = ({
   setIsSidebarCollapsed,
   isMobileMenuOpen,
   setIsMobileMenuOpen,
+  compactMode = false,
 }) => {
   useEffect(() => {
     if (isMobileMenuOpen) {
@@ -267,6 +273,7 @@ const Sidebar = ({
       >
         <SidebarContent
           isCollapsed={isSidebarCollapsed}
+          compactMode={compactMode}
         />
         <button
           onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -304,6 +311,7 @@ const Sidebar = ({
               <SidebarContent
                 isCollapsed={false}
                 setIsMobileMenuOpen={setIsMobileMenuOpen}
+                compactMode={compactMode}
               />
             </motion.div>
           </>

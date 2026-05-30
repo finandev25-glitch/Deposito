@@ -44,7 +44,7 @@ export function useDepositDashboard() {
   const [appDataLoading, setAppDataLoading] = useState(true);
   const [appDataError, setAppDataError] = useState(null);
   const [realtimeActivity, setRealtimeActivity] = useState(null);
-  const [voucherPanelState] = useState({
+  const [voucherPanelState, setVoucherPanelState] = useState({
     isOpen: false,
     voucherUrl: "",
     depositData: null,
@@ -277,6 +277,12 @@ export function useDepositDashboard() {
       return;
     }
 
+    setVoucherPanelState({
+      isOpen: true,
+      voucherUrl: url,
+      depositData: metadata,
+    });
+
     window.postMessage(
       {
         type: "LOAD_VOUCHER",
@@ -287,7 +293,13 @@ export function useDepositDashboard() {
     );
   }, []);
 
-  const handleCloseVoucherPanel = useCallback(() => {}, []);
+  const handleCloseVoucherPanel = useCallback(() => {
+    setVoucherPanelState({
+      isOpen: false,
+      voucherUrl: "",
+      depositData: null,
+    });
+  }, []);
 
   const handleAddBanco = useCallback(async (newBancoData) => {
     try {

@@ -1,0 +1,12 @@
+﻿PAQUETE DE BACKEND
+
+Incluye los archivos mínimos para mover el backend a otra PC.
+
+Antes de ejecutar en la nueva PC:
+1. Copia esta carpeta completa.
+2. Asegúrate de tener Node.js instalado.
+3. Completa las variables SQLSERVER_* en .env si vas a usar la consulta de movimientos por identificar.
+4. Ejecuta doble clic en: instalar-y-ejecutar.bat
+5. Si prefieres PowerShell, puedes usar: powershell -ExecutionPolicy Bypass -File .\scripts\run-backend-console.ps1
+
+Si quieres usarlo como servicio Windows, revisa scripts\windows-service-setup.md.

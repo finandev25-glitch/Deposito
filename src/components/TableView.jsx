@@ -28,6 +28,7 @@ const TableView = ({
   bancos,
   cuentas,
   onOpenVoucherWindow,
+  detailPresentationMode = "default",
 }) => {
   const [filteredDeposits, setFilteredDeposits] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -759,6 +760,7 @@ const TableView = ({
             cuentas={cuentas}
             onOpenVoucherWindow={onOpenVoucherWindow}
             editMode={modalEditMode}
+            presentationMode={detailPresentationMode}
           />
         )}
       </AnimatePresence>

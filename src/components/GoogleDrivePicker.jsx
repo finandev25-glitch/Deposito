@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { X, Search, Loader2 } from 'lucide-react';
 import { gapi } from 'gapi-script';
@@ -69,12 +70,12 @@ const GoogleDrivePicker = ({ onClose, onFileSelect }) => {
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+  const content = (
+    <div className="fixed inset-0 bg-black/60 z-[9998] flex items-center justify-center p-4">
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 30 }}
+        initial={{ opacity: 0, scale: 0.96, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 20 }}
         className="bg-white rounded-xl w-full max-w-xl h-[70vh] flex flex-col shadow-2xl"
       >
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
@@ -139,6 +140,8 @@ const GoogleDrivePicker = ({ onClose, onFileSelect }) => {
       </motion.div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(content, document.body) : content;
 };
 
 export default GoogleDrivePicker;

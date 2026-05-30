@@ -18,12 +18,14 @@ import EnviarMensajeYCloud from "./components/EnviarMensajeYCloud";
 import CambiarContrasena from "./components/CambiarContrasena";
 import RegularizarDepositos from "./components/RegularizarDepositos";
 import VoucherExtensionPanel from "./components/VoucherExtensionPanel.jsx";
+import FloatingDepositMetaOverlay from "./components/FloatingDepositMetaOverlay.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 import PendingApproval from "./pages/PendingApproval.jsx";
 import MobileHeader from "./components/MobileHeader.jsx";
 import { useDepositDashboard } from "./hooks/useDepositDashboard.js";
 
-function App() {
+function App({ uiMode = "default" }) {
+  const isExtensionMode = uiMode === "extension";
   const { currentUser, loading, refreshUsers } = useContext(AuthContext);
   const location = useLocation();
   const {
@@ -68,8 +70,9 @@ function App() {
     fetchEmpresasData,
     fetchCuentasData,
   } = useDepositDashboard();
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(isExtensionMode);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const detailPresentationMode = isExtensionMode ? "compact" : "default";
 
   useEffect(() => {
     if (!currentUser) return;
@@ -168,14 +171,27 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
+    <div
+      className={`flex h-screen overflow-hidden ${
+        isExtensionMode
+          ? "bg-slate-100 p-0 dark:bg-gray-950"
+          : "bg-gray-50 dark:bg-gray-950"
+      }`}
+    >
       <Sidebar
         isSidebarCollapsed={isSidebarCollapsed}
         setIsSidebarCollapsed={setIsSidebarCollapsed}
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
+        compactMode={isExtensionMode}
       />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div
+        className={`flex min-w-0 flex-1 flex-col ${
+          isExtensionMode
+            ? "overflow-hidden bg-white dark:bg-gray-900"
+            : ""
+        }`}
+      >
         <MobileHeader
           onMenuClick={() => setIsMobileMenuOpen(true)}
           connectionStatus={{
@@ -183,6 +199,8 @@ function App() {
             realtimeStatus,
             realtimeErrors,
           }}
+          compactMode={isExtensionMode}
+          realtimeActivity={realtimeActivity}
         />
         <main className="flex-1 overflow-y-auto">
           <Routes>
@@ -207,7 +225,9 @@ function App() {
                     realtimeStatus,
                     realtimeErrors,
                   }}
+                  showConnectionStatus={!isExtensionMode}
                   realtimeActivity={realtimeActivity}
+                  detailPresentationMode={detailPresentationMode}
                 />
               }
             />
@@ -225,6 +245,7 @@ function App() {
                   bancos={bancos}
                   cuentas={cuentas}
                   onOpenVoucherWindow={handleOpenVoucherWindow}
+                  detailPresentationMode={detailPresentationMode}
                 />
               }
             />
@@ -335,12 +356,22 @@ function App() {
         </main>
       </div>
 
-      <VoucherExtensionPanel
-        isOpen={voucherPanelState.isOpen}
-        voucherUrl={voucherPanelState.voucherUrl}
-        depositData={voucherPanelState.depositData}
-        onClose={handleCloseVoucherPanel}
-      />
+      {isExtensionMode && (
+        <>
+          <VoucherExtensionPanel
+            isOpen={voucherPanelState.isOpen}
+            voucherUrl={voucherPanelState.voucherUrl}
+            depositData={voucherPanelState.depositData}
+            onClose={handleCloseVoucherPanel}
+          />
+
+          <FloatingDepositMetaOverlay
+            isOpen={voucherPanelState.isOpen}
+            depositData={voucherPanelState.depositData}
+            onClose={handleCloseVoucherPanel}
+          />
+        </>
+      )}
     </div>
   );
 }

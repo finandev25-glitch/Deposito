@@ -86,11 +86,12 @@ export default function VoucherExtensionPanel({
           />
 
           <motion.aside
-            initial={{ x: 480, opacity: 0 }}
+            initial={{ x: 1400, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 480, opacity: 0 }}
+            exit={{ x: 1400, opacity: 0 }}
             transition={{ duration: 0.22, ease: "easeOut" }}
-            className="fixed right-0 top-0 z-[100] flex h-full w-full max-w-[720px] flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-950"
+            className="fixed right-0 top-0 z-[100] flex h-full w-full max-w-none flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-950"
+            style={{ width: "min(100vw, 1400px)" }}
           >
             <div className="flex items-start justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-800">
               <div>
