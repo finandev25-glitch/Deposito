@@ -3057,6 +3057,7 @@ function registerJsonRoutes(app) {
             )
             .eq("monto", monto)
             .eq("moneda", moneda)
+            .eq("estado", "validado")
             .neq("id", excludeId)
       );
 

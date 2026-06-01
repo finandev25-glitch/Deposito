@@ -1,3 +1,5 @@
+import { buildApiUrl } from "./apiBase.js";
+
 const API_PREFIX = "/api";
 const SESSION_KEY = "control-depositos-auth-session";
 
@@ -64,13 +66,13 @@ async function parseResponse(response) {
 }
 
 export async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_PREFIX}${path}`, prepareRequestOptions(options));
+  const response = await fetch(buildApiUrl(`${API_PREFIX}${path}`), prepareRequestOptions(options));
 
   return parseResponse(response);
 }
 
 export async function apiBlob(path, options = {}) {
-  const response = await fetch(`${API_PREFIX}${path}`, prepareRequestOptions(options));
+  const response = await fetch(buildApiUrl(`${API_PREFIX}${path}`), prepareRequestOptions(options));
 
   if (!response.ok) {
     const text = await response.text();

@@ -2188,11 +2188,12 @@ _Mensaje automático del sistema de control de depósitos_`;
                             type="button"
                             onClick={() => runCompactSearch("amount")}
                             disabled={!compactVoucherUrl || isCompactSearching}
-                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-900/50 dark:bg-violet-900/30 dark:text-violet-200 dark:hover:bg-violet-900/50"
+                            className="inline-flex h-6 min-w-[4.75rem] shrink-0 items-center justify-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-[10px] font-semibold text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-900/50 dark:bg-violet-900/30 dark:text-violet-200 dark:hover:bg-violet-900/50"
                             title="Buscar importe"
                             aria-label="Buscar importe"
                           >
                             <Search className="h-3 w-3" />
+                            <span>Buscar</span>
                           </button>
                         </label>
                         <input
@@ -2214,11 +2215,12 @@ _Mensaje automático del sistema de control de depósitos_`;
                             type="button"
                             onClick={() => runCompactSearch("operation")}
                             disabled={!compactVoucherUrl || isCompactSearching}
-                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900/50 dark:bg-blue-900/30 dark:text-blue-200 dark:hover:bg-blue-900/50"
+                            className="inline-flex h-6 min-w-[4.75rem] shrink-0 items-center justify-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[10px] font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-900/50 dark:bg-blue-900/30 dark:text-blue-200 dark:hover:bg-blue-900/50"
                             title="Buscar nro. operación"
                             aria-label="Buscar nro. operación"
                           >
                             <Search className="h-3 w-3" />
+                            <span>Buscar</span>
                           </button>
                         </label>
                         <input

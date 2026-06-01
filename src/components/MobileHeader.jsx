@@ -1,5 +1,5 @@
 import React from "react";
-import { Bell, Menu, ShieldCheck } from "lucide-react";
+import { Bell, Menu, RefreshCw, ShieldCheck } from "lucide-react";
 import ConnectionIndicator from "./ConnectionIndicator";
 
 const MobileHeader = ({
@@ -48,6 +48,14 @@ const MobileHeader = ({
             </span>
           </div>
         )}
+        <button
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center justify-center rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+          aria-label="Refrescar extensión"
+          title="Refrescar extensión"
+        >
+          <RefreshCw size={17} />
+        </button>
         <button
           onClick={onMenuClick}
           className="rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800"

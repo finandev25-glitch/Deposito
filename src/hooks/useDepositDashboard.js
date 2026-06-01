@@ -3,11 +3,12 @@ import { AuthContext } from "../contexts/AuthContext.jsx";
 import { useRealtimeDeposits } from "./useRealtimeDeposits.js";
 import { toLocalISOString } from "../utils/dateFormatters";
 import { DEPOSIT_FULL_QUERY } from "../constants/depositQuery";
+import { buildApiUrl } from "../services/apiBase.js";
 
 const API_BASE = "/api";
 
 async function apiJson(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(buildApiUrl(`${API_BASE}${path}`), {
     headers: {
       "Content-Type": "application/json",
       "Cache-Control": "no-cache",
@@ -52,6 +53,8 @@ export function useDepositDashboard() {
 
   const currentUserRef = useRef(currentUser);
   const currentSelectedDateRef = useRef(currentSelectedDate);
+  const depositsRef = useRef([]);
+  const notificationPermissionPromiseRef = useRef(null);
   const lastQueryRef = useRef({ type: null, value: null });
   const refreshDepositsRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
@@ -63,6 +66,190 @@ export function useDepositDashboard() {
   useEffect(() => {
     currentSelectedDateRef.current = currentSelectedDate;
   }, [currentSelectedDate]);
+
+  useEffect(() => {
+    depositsRef.current = deposits;
+  }, [deposits]);
+
+  const formatPendingDepositAmount = useCallback((value, currency = "PEN") => {
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+      return String(value ?? "-");
+    }
+
+    return new Intl.NumberFormat("es-PE", {
+      style: "currency",
+      currency: currency || "PEN",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
+  }, []);
+
+  const getPendingDepositDisplayData = useCallback(
+    (deposit = {}) => {
+      const monto = deposit.monto ?? deposit.importe ?? deposit.amount ?? null;
+      const moneda = deposit.moneda || "PEN";
+      const amount = formatPendingDepositAmount(monto, moneda);
+      const storeId = deposit.sucursal_id ?? deposit.sucursal?.id ?? deposit.tienda_id ?? null;
+      const workerId =
+        deposit.trabajador_sucursal_id ?? deposit.trabajador?.id ?? deposit.personal_id ?? null;
+      const bankId = deposit.banco_id ?? deposit.banco?.id ?? null;
+      const companyId = deposit.empresa_id ?? deposit.empresa?.id ?? null;
+
+      const storeRecord =
+        storeId != null ? sucursales.find((item) => String(item.id) === String(storeId)) : null;
+      const workerRecord =
+        workerId != null ? personal.find((item) => String(item.id) === String(workerId)) : null;
+      const bankRecord =
+        bankId != null ? bancos.find((item) => String(item.id) === String(bankId)) : null;
+      const companyRecord =
+        companyId != null ? empresas.find((item) => String(item.id) === String(companyId)) : null;
+
+      const store =
+        deposit.sucursal?.nombre ||
+        deposit.sucursal_nombre ||
+        storeRecord?.nombre ||
+        deposit.sucursal ||
+        deposit.tienda ||
+        deposit.tienda_nombre ||
+        "Sin tienda";
+      const personalName =
+        deposit.trabajador?.nombre ||
+        deposit.trabajador_nombre ||
+        workerRecord?.nombre ||
+        deposit.personal_nombre ||
+        deposit.personal ||
+        "Sin personal";
+      const bank =
+        deposit.banco?.abreviatura ||
+        deposit.banco?.nombre ||
+        bankRecord?.abreviatura ||
+        bankRecord?.nombre ||
+        deposit.banco_nombre ||
+        deposit.banco ||
+        "Banco";
+      const company =
+        deposit.empresa?.abreviatura ||
+        deposit.empresa?.nombre ||
+        companyRecord?.abreviatura ||
+        companyRecord?.nombre ||
+        "Empresa";
+      const operation =
+        deposit.numero_operacion_banco ||
+        deposit.numero_operacion ||
+        deposit.numero_voucher ||
+        "-";
+
+      return { amount, store, personal: personalName, bank, company, operation, monto, moneda };
+    },
+    [bancos, empresas, formatPendingDepositAmount, personal, sucursales],
+  );
+
+  const getNotificationIconUrl = useCallback(() => {
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+        <defs>
+          <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0f172a"/>
+            <stop offset="100%" stop-color="#2563eb"/>
+          </linearGradient>
+        </defs>
+        <rect width="128" height="128" rx="28" fill="url(#g)"/>
+        <path d="M24 50.5 64 33l40 17.5v10H24v-10Z" fill="#f8fafc"/>
+        <rect x="28" y="60" width="72" height="8" rx="4" fill="#e2e8f0"/>
+        <rect x="31" y="70" width="10" height="30" rx="3" fill="#f8fafc"/>
+        <rect x="49" y="70" width="10" height="30" rx="3" fill="#f8fafc"/>
+        <rect x="69" y="70" width="10" height="30" rx="3" fill="#f8fafc"/>
+        <rect x="87" y="70" width="10" height="30" rx="3" fill="#f8fafc"/>
+        <rect x="24" y="100" width="80" height="8" rx="4" fill="#e2e8f0"/>
+      </svg>
+    `.trim();
+
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  }, []);
+
+  const ensureNotificationPermission = useCallback(async () => {
+    if (typeof window === "undefined") return "unsupported";
+    if (!("Notification" in window)) return "unsupported";
+    if (!window.isSecureContext) return "unsupported";
+
+    if (Notification.permission === "granted" || Notification.permission === "denied") {
+      return Notification.permission;
+    }
+
+    if (!notificationPermissionPromiseRef.current) {
+      notificationPermissionPromiseRef.current = Notification.requestPermission().finally(() => {
+        notificationPermissionPromiseRef.current = null;
+      });
+    }
+
+    return notificationPermissionPromiseRef.current;
+  }, []);
+
+  const showPendingDepositNotification = useCallback(
+    async (deposit) => {
+      if (!deposit || deposit.estado !== "pendiente") {
+        return false;
+      }
+
+      const permission = await ensureNotificationPermission();
+      if (permission !== "granted") {
+        return false;
+      }
+
+      const { amount, store, personal, bank, company, operation } =
+        getPendingDepositDisplayData(deposit);
+      const client = deposit.cliente || "Sin cliente";
+      const dateText = deposit.fecha_deposito
+        ? new Date(deposit.fecha_deposito).toLocaleDateString("es-PE")
+        : "";
+      const timeText = new Date().toLocaleTimeString("es-PE", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      const title = `${store} - ${personal}`;
+      const bodyParts = [
+        `${company} - ${bank}`,
+        `Tienda: ${store}`,
+        `Personal: ${personal}`,
+        `OP: ${operation}`,
+        `Importe: ${amount}`,
+        `Cliente: ${client}`,
+        dateText ? `Fecha: ${dateText}` : null,
+        `Detectado: ${timeText}`,
+      ].filter(Boolean);
+
+      try {
+        const notification = new Notification(title, {
+          body: bodyParts.join("\n"),
+          tag: `deposit-pending-${deposit.id || operation}`,
+          renotify: true,
+          requireInteraction: true,
+          silent: false,
+          icon: getNotificationIconUrl(),
+          badge: getNotificationIconUrl(),
+          dir: "ltr",
+          lang: "es-PE",
+        });
+
+        notification.onclick = () => {
+          window.focus?.();
+          notification.close();
+        };
+
+        setTimeout(() => {
+          notification.close();
+        }, 15000);
+
+        return true;
+      } catch (error) {
+        console.warn("No se pudo mostrar la notificación nativa:", error.message);
+        return false;
+      }
+    },
+    [ensureNotificationPermission, getNotificationIconUrl, getPendingDepositDisplayData],
+  );
 
   const mergeDepositRecord = useCallback((existing = {}, incoming = {}) => {
     const merged = { ...existing, ...incoming };
@@ -196,7 +383,7 @@ export function useDepositDashboard() {
     refreshDepositsRef.current = refreshDeposits;
   }, [refreshDeposits]);
 
-  const handleRealtimeInsert = useCallback(() => {
+  const handleRealtimeInsert = useCallback((newRecord) => {
     setRealtimeActivity({
       type: "update",
       count: 1,
@@ -204,11 +391,23 @@ export function useDepositDashboard() {
       at: Date.now(),
     });
     console.log("🔄 REALTIME: Llamando refreshDeposits para INSERT...");
+    if (newRecord?.estado === "pendiente") {
+      void showPendingDepositNotification(newRecord);
+    }
     refreshDeposits();
-  }, [refreshDeposits]);
+  }, [refreshDeposits, showPendingDepositNotification]);
 
   const handleRealtimeUpdate = useCallback((fullDeposit) => {
     if (!fullDeposit) return;
+
+    const previousDeposit = depositsRef.current.find((dep) => dep.id === fullDeposit.id) || null;
+    const isEnteringPending =
+      fullDeposit.estado === "pendiente" &&
+      previousDeposit?.estado !== "pendiente";
+
+    if (isEnteringPending) {
+      void showPendingDepositNotification(fullDeposit);
+    }
     
     setRealtimeActivity({
       type: "update",
@@ -236,7 +435,7 @@ export function useDepositDashboard() {
       setTimeout(() => refreshDeposits(), 0);
       return prev;
     });
-  }, [mergeDepositRecord, refreshDeposits]);
+  }, [mergeDepositRecord, refreshDeposits, showPendingDepositNotification]);
 
   const handleRealtimeDelete = useCallback((deletedId) => {
     if (!deletedId) return;
