@@ -939,6 +939,27 @@ function resolveSqlServerEmpresaNombre(empresa, overrideName = "") {
     : "EVOLUTION CAR SERVICE EIRL";
 }
 
+function resolvePeriodMonthRange(period) {
+  const normalized = String(period || "").trim();
+  if (!/^\d{6}$/.test(normalized)) {
+    return null;
+  }
+
+  const year = Number(normalized.slice(0, 4));
+  const month = Number(normalized.slice(4, 6));
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  const startDate = new Date(Date.UTC(year, month - 1, 1));
+  const endDate = new Date(Date.UTC(year, month, 0));
+
+  return {
+    startDate: startDate.toISOString().slice(0, 10),
+    endDate: endDate.toISOString().slice(0, 10),
+  };
+}
+
 function buildSqlServerConfig() {
   const connectionString =
     getEnv("SQLSERVER_CONNECTION_STRING") ||
@@ -2193,6 +2214,10 @@ async function fetchMovimientosPorIdentificarSqlServer({
   fechaInicio,
   fechaFin,
   searchTerm,
+  nroOperacion = "",
+  banco = "",
+  fecha = "",
+  importe = "",
   limit = 250,
   offset = 0,
 }) {
@@ -2245,7 +2270,7 @@ WITH TCORTADO AS (
       WHEN COUNT(DISTINCT NULLIF(LTRIM(RTRIM(T2.REGISTRO)), '')) > 1 THEN 'VARIOS'
       ELSE ISNULL(MAX(NULLIF(LTRIM(RTRIM(T2.REGISTRO)), '')), '')
     END AS REGISTRO,
-    T1.OBSERVACION
+  T1.OBSERVACION AS Observacion
   FROM Creditos.dbo.CORTADO${empresaSuffix} T1 WITH (NOLOCK)
   LEFT JOIN Creditos.dbo.RegistrosConcar${empresaSuffix} T2 WITH (NOLOCK)
     ON T2.MCUO = T1.CUO
@@ -2288,7 +2313,7 @@ SELECT
   DB.FechaRecibido,
   DB.UrlVoucher,
   DB.TelefonoContacto,
-  TCORTADO.OBSERVACION
+  TCORTADO.OBSERVACION AS Observacion
 FROM TCORTADO
 LEFT JOIN Creditos.dbo.DepositosBanco DB WITH (NOLOCK)
   ON DB.MCUO = TCORTADO.CUO
@@ -2329,6 +2354,246 @@ OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
     async () => {
       const result = await request.query(queryText);
       return result.recordset || [];
+    }
+  );
+}
+
+async function fetchCortadoVsRegistrosSqlServer({
+  empresa,
+  empresaNombre,
+  period,
+  searchTerm,
+  nroOperacion = "",
+  banco = "",
+  fecha = "",
+  importe = "",
+  limit = 250,
+  offset = 0,
+}) {
+  const pool = await getSqlServerPool();
+  if (!pool) {
+    throw new Error("SQL Server no est\u00e1 configurado en el backend");
+  }
+
+  const empresaSuffix = resolveSqlServerEmpresaSuffix(empresa);
+  const resolvedEmpresaNombre = resolveSqlServerEmpresaNombre(empresa, empresaNombre);
+  const normalizedLimit = Math.min(Math.max(Number(limit) || 250, 1), 2000);
+  const normalizedOffset = Math.max(Number(offset) || 0, 0);
+  const normalizedSearch = String(searchTerm || "").trim();
+  const searchPattern = normalizedSearch ? `%${normalizedSearch}%` : null;
+  const normalizedNroOperacion = String(nroOperacion || "").trim();
+  const normalizedBanco = String(banco || "").trim();
+  const normalizedFecha = normalizeDateOnly(fecha);
+  const normalizedImporte = String(importe || "").trim();
+  const periodRange = resolvePeriodMonthRange(period);
+
+  if (!periodRange) {
+    const error = new Error("Debes ingresar un periodo válido en formato YYYYMM");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const request = pool.request();
+  request.input("empresaNombre", sql.NVarChar(150), resolvedEmpresaNombre);
+  request.input("fechaInicio", sql.Date, new Date(`${periodRange.startDate}T00:00:00`));
+  request.input("fechaFin", sql.Date, new Date(`${periodRange.endDate}T00:00:00`));
+  request.input("searchTerm", sql.NVarChar(sql.MAX), searchPattern);
+  request.input("nroOperacion", sql.NVarChar(100), normalizedNroOperacion || null);
+  request.input("banco", sql.NVarChar(150), normalizedBanco || null);
+  request.input("fecha", sql.Date, normalizedFecha ? new Date(`${normalizedFecha}T00:00:00`) : null);
+  request.input("importe", sql.Decimal(18, 2), normalizedImporte ? Number(normalizedImporte) : null);
+  request.input("limit", sql.Int, normalizedLimit);
+  request.input("offset", sql.Int, normalizedOffset);
+
+  const queryText = `
+SET NOCOUNT ON;
+
+DECLARE @fechaInicioLocal DATE = @fechaInicio;
+DECLARE @fechaFinLocal DATE = @fechaFin;
+DECLARE @searchPattern NVARCHAR(MAX) = @searchTerm;
+DECLARE @nroOperacionFilter NVARCHAR(100) = @nroOperacion;
+DECLARE @bancoFilter NVARCHAR(150) = @banco;
+DECLARE @fechaFilter DATE = @fecha;
+DECLARE @importeFilter DECIMAL(18, 2) = @importe;
+
+IF @fechaInicioLocal IS NULL OR @fechaFinLocal IS NULL
+BEGIN
+  RAISERROR('Debes ingresar un periodo válido en formato YYYYMM', 16, 1);
+  RETURN;
+END;
+
+SELECT
+    ID, CUO, PERIODO, BANCO, FECHA, DESCRIPCION,
+    NRO_OPER, CARGO, ABONO, SD, COMP, TIPO, DOC, AREA, Observacion
+INTO #TempCortado
+FROM Creditos.dbo.CORTADO${empresaSuffix} WITH (NOLOCK)
+WHERE FECHA BETWEEN @fechaInicioLocal AND @fechaFinLocal;
+
+CREATE INDEX IX_TempCortado_CUO ON #TempCortado(CUO);
+
+WITH TCORTADO AS (
+    SELECT
+        R.ID, R.PERIODO, R.BANCO, R.CUO, R.FECHA, R.DESCRIPCION,
+        R.NRO_OPER, R.CARGO, R.ABONO, R.SD, R.COMP, R.TIPO,
+        ISNULL(T.REGISTRO, '') AS REGISTRO,
+        ISNULL(T.GLOSA, '') AS GLOSA,
+        T.REG,
+        (R.ABONO - R.CARGO - ISNULL(T.REG, 0)) AS DIF,
+        R.DOC, R.AREA, R.Observacion
+    FROM #TempCortado R
+    LEFT JOIN (
+        SELECT
+            MCUO,
+            CASE WHEN COUNT(DISTINCT REGISTRO) > 1 THEN 'VARIOS' ELSE MAX(REGISTRO) END AS REGISTRO,
+            CASE WHEN COUNT(DISTINCT DESCRIPCION) > 1 THEN 'VARIOS' ELSE MAX(DESCRIPCION) END AS GLOSA,
+            SUM(IMPORTE) AS REG
+        FROM Creditos.dbo.RegistrosConcar${empresaSuffix} WITH (NOLOCK)
+        WHERE ESTADO <> 'ELIMINADO'
+          AND FECHAREP BETWEEN @fechaInicioLocal AND @fechaFinLocal
+        GROUP BY MCUO
+    ) T ON T.MCUO = R.CUO
+),
+FILTRADO AS (
+    SELECT
+        T.*,
+        COUNT(*) OVER() AS TOTAL_COUNT,
+        ROW_NUMBER() OVER (ORDER BY T.FECHA, T.BANCO, T.CUO, T.ID) AS RN
+    FROM TCORTADO T
+    WHERE
+      (
+      @searchPattern IS NULL
+      OR CONVERT(NVARCHAR(50), T.NRO_OPER) LIKE @searchPattern
+      OR CONVERT(NVARCHAR(50), T.CUO) LIKE @searchPattern
+      OR CONVERT(NVARCHAR(150), T.BANCO) LIKE @searchPattern
+      OR CONVERT(NVARCHAR(250), T.DESCRIPCION) LIKE @searchPattern
+      OR CONVERT(NVARCHAR(50), T.ABONO) LIKE @searchPattern
+      OR CONVERT(NVARCHAR(150), T.REGISTRO) LIKE @searchPattern
+      OR CONVERT(NVARCHAR(250), T.GLOSA) LIKE @searchPattern
+      )
+    AND (
+      @nroOperacionFilter IS NULL
+      OR CONVERT(NVARCHAR(50), T.NRO_OPER) LIKE '%' + @nroOperacionFilter + '%'
+      OR CONVERT(NVARCHAR(50), T.CUO) LIKE '%' + @nroOperacionFilter + '%'
+    )
+    AND (
+      @bancoFilter IS NULL
+      OR CONVERT(NVARCHAR(150), T.BANCO) LIKE '%' + @bancoFilter + '%'
+    )
+    AND (
+      @fechaFilter IS NULL
+      OR CONVERT(DATE, T.FECHA) = @fechaFilter
+    )
+    AND (
+      @importeFilter IS NULL
+      OR ABS(ROUND(ISNULL(T.ABONO, 0), 2) - ROUND(@importeFilter, 2)) < 0.01
+    )
+)
+SELECT
+    ID, PERIODO, BANCO, CUO, FECHA, DESCRIPCION,
+    NRO_OPER, CARGO, ABONO, SD, COMP, TIPO,
+    REGISTRO, GLOSA, REG, DIF, DOC, AREA, Observacion,
+    TOTAL_COUNT
+FROM FILTRADO
+WHERE RN > @offset AND RN <= (@offset + @limit)
+ORDER BY RN;
+
+DROP TABLE #TempCortado;
+  `;
+
+  if (QUERY_LOGGING_ENABLED) {
+    console.log("[MSSQL] QUERY cortado.vsRegistros", {
+      empresa: String(empresa),
+      empresaNombre: resolvedEmpresaNombre,
+      period: String(period || "").trim(),
+      fechaInicio: periodRange.startDate,
+      fechaFin: periodRange.endDate,
+      nroOperacion: normalizedNroOperacion || null,
+      banco: normalizedBanco || null,
+      fecha: normalizedFecha || null,
+      importe: normalizedImporte || null,
+      queryText,
+    });
+  }
+
+  return runLoggedSqlServerQuery(
+    "cortado.vsRegistros",
+    {
+      empresa,
+      empresaNombre: resolvedEmpresaNombre,
+      period,
+      searchTerm: normalizedSearch,
+      nroOperacion: normalizedNroOperacion || null,
+      banco: normalizedBanco || null,
+      fecha: normalizedFecha || null,
+      importe: normalizedImporte || null,
+      fechaInicio: periodRange.startDate,
+      fechaFin: periodRange.endDate,
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+    async () => {
+      const result = await request.query(queryText);
+      const rows = result.recordset || [];
+      const totalCount = rows.length ? Number(rows[0].TOTAL_COUNT || rows.length) : 0;
+      return {
+        rows,
+        totalCount,
+      };
+    }
+  );
+}
+
+async function updateCortadoTipoSqlServer({ empresa, empresaNombre, id, tipo }) {
+  const pool = await getSqlServerPool();
+  if (!pool) {
+    throw new Error("SQL Server no está configurado en el backend");
+  }
+
+  const empresaSuffix = resolveSqlServerEmpresaSuffix(empresa);
+  const resolvedEmpresaNombre = resolveSqlServerEmpresaNombre(empresa, empresaNombre);
+  const normalizedId = Number(id);
+  const normalizedTipo = String(tipo || "").trim();
+
+  if (!Number.isFinite(normalizedId)) {
+    const error = new Error("ID inválido para actualizar CORTADO");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!normalizedTipo) {
+    const error = new Error("TIPO es requerido para actualizar CORTADO");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const request = pool.request();
+  request.input("id", sql.Int, normalizedId);
+  request.input("tipo", sql.NVarChar(250), normalizedTipo);
+
+  const queryText = `
+UPDATE Creditos.dbo.CORTADO${empresaSuffix}
+SET TIPO = @tipo
+WHERE ID = @id;
+
+SELECT @@ROWCOUNT AS affectedRows;
+  `;
+
+  return runLoggedSqlServerQuery(
+    "cortado.updateTipo",
+    {
+      empresa,
+      empresaNombre: resolvedEmpresaNombre,
+      id: normalizedId,
+      tipo: normalizedTipo,
+    },
+    async () => {
+      const result = await request.query(queryText);
+      const affectedRows = Number(result.recordset?.[0]?.affectedRows || 0);
+      return {
+        affectedRows,
+        id: normalizedId,
+        tipo: normalizedTipo,
+      };
     }
   );
 }
@@ -3080,8 +3345,8 @@ function registerJsonRoutes(app) {
         duplicates,
         message:
           duplicates.length > 0
-            ? `Â¡Alerta de Duplicado! Se encontraron ${duplicates.length} depÃ³sito(s) con los mismos datos.`
-            : "No se encontraron duplicados. Puede confirmar el depÃ³sito.",
+            ? `¡Alerta de Duplicado! Se encontraron ${duplicates.length} depósito(s) con los mismos datos.`
+            : "No se encontraron duplicados. Puede confirmar el depósito.",
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -3436,6 +3701,86 @@ function registerJsonRoutes(app) {
           limit: Math.min(Math.max(Number(limit) || 250, 1), 2000),
           offset: Math.max(Number(offset) || 0, 0),
           count: Array.isArray(data) ? data.length : 0,
+        },
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      res.status(statusCode).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/sqlserver/cortado-vs-registros", async (req, res) => {
+    try {
+      const empresa = req.query.empresa || "1";
+      const empresaNombre = req.query.empresaNombre || "";
+      const period = req.query.period || req.query.perfil || req.query.periodo || "";
+      const searchTerm = req.query.searchTerm || req.query.search || "";
+      const nroOperacion = req.query.nroOperacion || req.query.nro_operacion || "";
+      const banco = req.query.banco || "";
+      const fecha = req.query.fecha || "";
+      const importe = req.query.importe || "";
+      const limit = req.query.limit ? Number(req.query.limit) : 250;
+      const offset = req.query.offset ? Number(req.query.offset) : 0;
+
+      const { data, error } = await fetchCortadoVsRegistrosSqlServer({
+        empresa,
+        empresaNombre,
+        period,
+        searchTerm,
+        nroOperacion,
+        banco,
+        fecha,
+        importe,
+        limit,
+        offset,
+      });
+
+      if (error) throw error;
+
+      res.json({
+        data: data?.rows || [],
+        meta: {
+          empresa: String(empresa),
+          empresaNombre: resolveSqlServerEmpresaNombre(empresa, empresaNombre),
+          period: String(period || "").trim() || null,
+          searchTerm: String(searchTerm || "").trim() || null,
+          nroOperacion: String(nroOperacion || "").trim() || null,
+          banco: String(banco || "").trim() || null,
+          fecha: normalizeDateOnly(fecha) || null,
+          importe: String(importe || "").trim() || null,
+          limit: Math.min(Math.max(Number(limit) || 250, 1), 2000),
+          offset: Math.max(Number(offset) || 0, 0),
+          count: Array.isArray(data?.rows) ? data.rows.length : 0,
+          totalCount: Number(data?.totalCount || 0),
+        },
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      res.status(statusCode).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/sqlserver/cortado-asignar-tipo", async (req, res) => {
+    try {
+      const empresa = req.body?.empresa || "1";
+      const empresaNombre = req.body?.empresaNombre || "";
+      const id = req.body?.id;
+      const tipo = req.body?.tipo || "";
+
+      const { data, error } = await updateCortadoTipoSqlServer({
+        empresa,
+        empresaNombre,
+        id,
+        tipo,
+      });
+
+      if (error) throw error;
+
+      res.json({
+        data,
+        meta: {
+          empresa: String(empresa),
+          empresaNombre: resolveSqlServerEmpresaNombre(empresa, empresaNombre),
         },
       });
     } catch (error) {

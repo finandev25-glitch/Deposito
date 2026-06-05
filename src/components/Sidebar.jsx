@@ -11,7 +11,6 @@ import {
   Users,
   PieChart,
   FileText,
-  Archive,
   ShieldCheck,
   LogOut,
   ChevronLeft,
@@ -57,7 +56,6 @@ const SidebarContent = ({
     },
     { view: "reportes", icon: PieChart, label: "Reportes" },
     { view: "documentos", icon: FileText, label: "Documentos" },
-    { view: "exportar-vouchers", icon: Archive, label: "Exportar Vouchers" },
     { view: "regularizar-depositos", icon: FolderCheck, label: "Regularizar Depósitos" },
     { view: "cambiar-contrasena", icon: KeyRound, label: "Cambiar Contraseña" },
   ];
@@ -72,15 +70,6 @@ const SidebarContent = ({
     if (setIsMobileMenuOpen) {
       setIsMobileMenuOpen(false);
     }
-  };
-
-  const getUserInitials = (name) => {
-    if (!name || typeof name !== "string") return "UD"; // Usuario Desconocido
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase();
   };
 
   return (
@@ -185,7 +174,13 @@ const SidebarContent = ({
           {!isCollapsed && (
             <div className="flex items-center space-x-3 overflow-hidden">
               <div className="h-10 w-10 rounded-full bg-blue-200 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold flex-shrink-0">
-                {getUserInitials(currentUser?.nombre)}
+                {String(currentUser?.nombre || "UD")
+                  .split(" ")
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0])
+                  .join("")
+                  .toUpperCase()}
               </div>
               <div className="overflow-hidden">
                 <p className="font-semibold text-sm text-gray-800 dark:text-gray-200 whitespace-nowrap">
@@ -200,7 +195,13 @@ const SidebarContent = ({
           {isCollapsed && (
             <div className="flex flex-col items-center space-y-2">
               <div className="h-10 w-10 rounded-full bg-blue-200 dark:bg-blue-900/50 flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold">
-                {getUserInitials(currentUser?.nombre)}
+                {String(currentUser?.nombre || "UD")
+                  .split(" ")
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((part) => part[0])
+                  .join("")
+                  .toUpperCase()}
               </div>
               <button
                 onClick={() => {

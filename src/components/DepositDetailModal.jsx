@@ -1,4 +1,4 @@
-﻿﻿import React, {
+import React, {
   useState,
   useEffect,
   useContext,
@@ -37,6 +37,7 @@ import {
   AlertTriangle,
   Phone,
   ExternalLink,
+  FileDown,
 } from "lucide-react";
 import RejectionModal from "./RejectionModal";
 import GoogleDrivePicker from "./GoogleDrivePicker.jsx";
@@ -107,6 +108,20 @@ const CompactFieldCard = ({ icon: Icon, label, value }) => (
 
 const normalizeDateForInput = (value) => {
   if (!value) return "";
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return "";
+
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+      return raw.slice(0, 10);
+    }
+
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+      const [day, month, year] = raw.split("/");
+      return `${year}-${month}-${day}`;
+    }
+  }
+
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return value;
   }
@@ -122,6 +137,20 @@ const normalizeDateForInput = (value) => {
 
 const formatSqlMovementDate = (value) => {
   if (!value) return "-";
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return "-";
+
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+      const [year, month, day] = raw.slice(0, 10).split("-");
+      return `${day}/${month}/${year}`;
+    }
+
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+      return raw;
+    }
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   const day = String(date.getDate()).padStart(2, "0");
@@ -130,8 +159,8 @@ const formatSqlMovementDate = (value) => {
   return `${day}/${month}/${year}`;
 };
 
-const hasSqlMovementHighlightData = (row) =>
-  ["Sucursal", "Contacto", "ValidadoPor", "OBSERVACION"].some((field) => {
+const hasSqlMovementAttentionData = (row) =>
+  ["ValidadoPor", "OBSERVACION", "Observacion"].some((field) => {
     const value = row?.[field];
     const text = String(value ?? "").trim();
     return text.length > 0 && text !== "-";
@@ -140,9 +169,14 @@ const hasSqlMovementHighlightData = (row) =>
 const getReplyMessageIdFromDeposit = (deposit) =>
   deposit?.chatwoot_message_id || null;
 
-const getSqlServerCompanyConfigFromDeposit = (deposit) => {
+const getSqlServerCompanyConfigFromEmpresaId = (empresaId, empresas = []) => {
+  const companyId = String(empresaId ?? "").trim();
+  const selectedEmpresa = empresas.find((empresa) => String(empresa?.id) === companyId) || null;
   const companyText = String(
-    deposit?.empresa?.nombre || deposit?.empresa?.abreviatura || "",
+    selectedEmpresa?.nombre ||
+      selectedEmpresa?.abreviatura ||
+      selectedEmpresa?.alias ||
+      "",
   ).toLowerCase();
 
   if (companyText.includes("jch")) {
@@ -152,9 +186,30 @@ const getSqlServerCompanyConfigFromDeposit = (deposit) => {
     };
   }
 
+  if (companyText.includes("evolution")) {
+    return {
+      empresa: "2",
+      empresaNombre: "EVOLUTION CAR SERVICE EIRL",
+    };
+  }
+
+  if (companyId === "1") {
+    return {
+      empresa: "1",
+      empresaNombre: "JCH COMERCIAL SA",
+    };
+  }
+
+  if (companyId === "2") {
+    return {
+      empresa: "2",
+      empresaNombre: "EVOLUTION CAR SERVICE EIRL",
+    };
+  }
+
   return {
-    empresa: "2",
-    empresaNombre: "EVOLUTION CAR SERVICE EIRL",
+    empresa: "",
+    empresaNombre: "",
   };
 };
 
@@ -168,6 +223,142 @@ const getSqlServerDefaultRange = () => {
     fechaInicio: `${year}-01-01`,
     fechaFin: `${year}-${month}-${day}`,
   };
+};
+
+const getYYYYMMFromDate = (date, monthOffset = 0) => {
+  const base = new Date(date);
+  base.setMonth(base.getMonth() + monthOffset);
+  const year = base.getFullYear();
+  const month = String(base.getMonth() + 1).padStart(2, "0");
+  return `${year}${month}`;
+};
+
+const getSqlMovementSelectionLabel = (deposit) => {
+  const personal = String(
+    deposit?.trabajador?.nombre || deposit?.trabajador_nombre || "",
+  ).trim();
+  const sucursal = String(
+    deposit?.sucursal?.nombre || deposit?.sucursal_nombre || "",
+  ).trim();
+
+  return [personal, sucursal].filter(Boolean).join(" - ");
+};
+
+const getSqlPeriodRangeFromYYYYMM = (period) => {
+  const normalized = String(period || "").trim();
+  if (!/^\d{6}$/.test(normalized)) return null;
+
+  const year = Number(normalized.slice(0, 4));
+  const month = Number(normalized.slice(4, 6));
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0);
+  const fechaInicio = `${year}-${String(month).padStart(2, "0")}-01`;
+  const fechaFin = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+
+  return { fechaInicio, fechaFin };
+};
+
+const SQL_MOVEMENTS_COLUMNS = [
+  { key: "FECHA", label: "Fecha", hidden: false },
+  { key: "BANCO", label: "Banco", hidden: false },
+  { key: "NRO_OPER", label: "Nro. op.", hidden: false },
+  { key: "DESCRIPCION", label: "Descripcion", hidden: false },
+  { key: "ABONO", label: "Abono", hidden: false },
+  { key: "REG", label: "Reg", hidden: false },
+  { key: "Sucursal", label: "Sucursal", hidden: false },
+  { key: "Contacto", label: "Contacto", hidden: false },
+  { key: "ValidadoPor", label: "Validado por", hidden: false },
+  { key: "Observacion", label: "Observación", hidden: false },
+];
+
+const SQL_CORTADO_COLUMNS = [
+  { key: "FECHA", label: "Fecha", hidden: false },
+  { key: "BANCO", label: "Banco", hidden: false },
+  { key: "NRO_OPER", label: "Nro. operación", hidden: false },
+  { key: "DESCRIPCION", label: "Descripcion", hidden: false },
+  { key: "CARGO", label: "Cargo", hidden: false },
+  { key: "ABONO", label: "Abono", hidden: false },
+  { key: "REG", label: "Reg", hidden: false },
+  { key: "DIF", label: "Dif", hidden: false },
+  { key: "REGISTRO", label: "Registro", hidden: false },
+  { key: "GLOSA", label: "GLOSA", hidden: false },
+];
+
+const formatSqlDateDDMMYYYY = (value) => {
+  if (!value) return "-";
+  const raw = String(value).trim();
+  if (!raw) return "-";
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    const [year, month, day] = raw.slice(0, 10).split("-");
+    return `${day}/${month}/${year}`;
+  }
+
+  const date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) {
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  return raw;
+};
+
+const renderSqlCell = (value, key) => {
+  if (value == null || value === "") return "-";
+  if (key === "FECHA") return formatSqlDateDDMMYYYY(value);
+  if (["ABONO", "REG", "CARGO", "DIF"].includes(key)) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric.toLocaleString("es-PE", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    }
+  }
+  return String(value);
+};
+
+const normalizeSqlServerRow = (row) => {
+  if (!row || typeof row !== "object") return row;
+
+  const normalized = { ...row };
+
+  normalized.Observacion =
+    row.Observacion ??
+    row.OBSERVACION ??
+    row.observacion ??
+    row.OBSERVACIONES ??
+    row.observaciones ??
+    "";
+
+  normalized.ValidadoPor =
+    row.ValidadoPor ??
+    row.VALIDADOPOR ??
+    row.validado_por ??
+    row.validadoPor ??
+    "";
+
+  normalized.Sucursal =
+    row.Sucursal ??
+    row.SUCURSAL ??
+    row.sucursal ??
+    row.sucursal_nombre ??
+    "";
+
+  normalized.Contacto =
+    row.Contacto ??
+    row.CONTACTO ??
+    row.contacto ??
+    row.trabajador_nombre ??
+    "";
+
+  return normalized;
 };
 
 const DepositDetailModal = ({
@@ -217,9 +408,35 @@ const DepositDetailModal = ({
   const [isSqlMovementsModalOpen, setIsSqlMovementsModalOpen] = useState(false);
   const [sqlMovementsLoading, setSqlMovementsLoading] = useState(false);
   const [sqlMovementsError, setSqlMovementsError] = useState("");
+  const [sqlMovementsActionMessage, setSqlMovementsActionMessage] = useState("");
   const [sqlMovementsRows, setSqlMovementsRows] = useState([]);
   const [sqlMovementsMeta, setSqlMovementsMeta] = useState(null);
+  const [sqlCortadoLoading, setSqlCortadoLoading] = useState(false);
+  const [sqlCortadoError, setSqlCortadoError] = useState("");
+  const [sqlCortadoRows, setSqlCortadoRows] = useState([]);
+  const [sqlCortadoMeta, setSqlCortadoMeta] = useState(null);
   const [sqlMovementsSearch, setSqlMovementsSearch] = useState("");
+  const [sqlCortadoPeriod, setSqlCortadoPeriod] = useState("");
+  const [sqlCortadoNroOperacionFilter, setSqlCortadoNroOperacionFilter] = useState("");
+  const [sqlCortadoBancoFilter, setSqlCortadoBancoFilter] = useState("");
+  const [sqlCortadoFechaFilter, setSqlCortadoFechaFilter] = useState("");
+  const [sqlCortadoImporteFilter, setSqlCortadoImporteFilter] = useState("");
+  const [sqlCortadoPage, setSqlCortadoPage] = useState(1);
+  const [sqlCortadoPageSize] = useState(100);
+  const [sqlCortadoTotalCount, setSqlCortadoTotalCount] = useState(0);
+  const [sqlActiveTab, setSqlActiveTab] = useState("movimientos");
+  const [sqlSelectedMovement, setSqlSelectedMovement] = useState(null);
+  const [sqlSelectionToast, setSqlSelectionToast] = useState("");
+  const sqlSelectedMovementId = sqlSelectedMovement?.ID ?? null;
+  const isSqlLoading = sqlMovementsLoading || sqlCortadoLoading;
+
+  useEffect(() => {
+    if (!sqlSelectionToast) return undefined;
+    const timeoutId = setTimeout(() => {
+      setSqlSelectionToast("");
+    }, 2500);
+    return () => clearTimeout(timeoutId);
+  }, [sqlSelectionToast]);
   const [isRejectionModalOpen, setIsRejectionModalOpen] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isFloatingIframeOpen, setIsFloatingIframeOpen] = useState(false);
@@ -340,7 +557,106 @@ const DepositDetailModal = ({
   const closeSqlMovementsModal = useCallback(() => {
     setIsSqlMovementsModalOpen(false);
     setSqlMovementsError("");
+    setSqlMovementsActionMessage("");
+    setSqlCortadoError("");
   }, []);
+
+  const fetchSqlServerRows = useCallback(
+    async ({
+      endpoint,
+      searchValue,
+      fechaInicio,
+      fechaFin,
+      period,
+      paginate = true,
+      limit = 1000,
+      offset = 0,
+      filters = {},
+    }) => {
+      const { empresa, empresaNombre } = getSqlServerCompanyConfigFromEmpresaId(
+        editableData.empresa_id,
+        empresas,
+      );
+      if (!empresa) {
+        throw new Error("Selecciona una empresa válida en el modal Detalle depósito.");
+      }
+      const defaultRange = getSqlServerDefaultRange();
+      const effectiveFechaInicio = fechaInicio || defaultRange.fechaInicio;
+      const effectiveFechaFin = fechaFin || defaultRange.fechaFin;
+      const pageSize = Math.max(Number(limit) || 1000, 1);
+      let currentOffset = Math.max(Number(offset) || 0, 0);
+      let loadedRows = [];
+      let lastMeta = null;
+
+      const makeRequest = async (requestOffset) => {
+        const params = new URLSearchParams({
+          empresa,
+          empresaNombre,
+        });
+
+        if (searchValue) {
+          params.set("searchTerm", searchValue);
+        }
+
+        if (filters.nroOperacion) {
+          params.set("nroOperacion", filters.nroOperacion);
+        }
+        if (filters.banco) {
+          params.set("banco", filters.banco);
+        }
+        if (filters.fecha) {
+          params.set("fecha", filters.fecha);
+        }
+        if (filters.importe) {
+          params.set("importe", filters.importe);
+        }
+
+        if (period) {
+          params.set("period", period);
+        } else {
+          params.set("fechaInicio", effectiveFechaInicio);
+          params.set("fechaFin", effectiveFechaFin);
+        }
+
+        params.set("limit", String(pageSize));
+        params.set("offset", String(requestOffset));
+
+        const response = await apiGet(`/sqlserver/${endpoint}?${params.toString()}`);
+        const rows = Array.isArray(response?.data) ? response.data : [];
+        return { rows, meta: response?.meta || null };
+      };
+
+      if (!paginate) {
+        const response = await makeRequest(currentOffset);
+        loadedRows = response.rows;
+        lastMeta = response.meta;
+      } else {
+        while (true) {
+          const response = await makeRequest(currentOffset);
+          const rows = response.rows;
+          lastMeta = response.meta;
+          loadedRows = loadedRows.concat(rows);
+
+          if (rows.length < pageSize) {
+            break;
+          }
+
+          currentOffset += pageSize;
+        }
+      }
+
+      return {
+        rows: loadedRows,
+        meta: lastMeta
+          ? {
+              ...lastMeta,
+              count: loadedRows.length,
+            }
+          : { count: loadedRows.length },
+      };
+    },
+    [editableData.empresa_id, empresas],
+  );
 
   const loadSqlMovements = useCallback(
     async (searchOverride = null) => {
@@ -349,55 +665,21 @@ const DepositDetailModal = ({
         return;
       }
 
-      const { empresa, empresaNombre } = getSqlServerCompanyConfigFromDeposit(deposit);
-      const { fechaInicio, fechaFin } = getSqlServerDefaultRange();
       const searchValue =
-        searchOverride !== null ? String(searchOverride || "").trim() : String(sqlMovementsSearch || "").trim();
+        searchOverride !== null
+          ? String(searchOverride || "").trim()
+          : String(sqlMovementsSearch || "").trim();
 
       setSqlMovementsLoading(true);
       setSqlMovementsError("");
 
       try {
-        const pageSize = 1000;
-        let offset = 0;
-        let loadedRows = [];
-        let lastMeta = null;
-
-        while (true) {
-          const params = new URLSearchParams({
-            empresa,
-            empresaNombre,
-            fechaInicio,
-            fechaFin,
-            limit: String(pageSize),
-            offset: String(offset),
-          });
-
-          if (searchValue) {
-            params.set("searchTerm", searchValue);
-          }
-
-          const response = await apiGet(`/sqlserver/movimientos-por-identificar?${params.toString()}`);
-          const rows = Array.isArray(response?.data) ? response.data : [];
-          lastMeta = response?.meta || null;
-          loadedRows = loadedRows.concat(rows);
-
-          if (rows.length < pageSize) {
-            break;
-          }
-
-          offset += pageSize;
-        }
-
-        setSqlMovementsRows(loadedRows);
-        setSqlMovementsMeta(
-          lastMeta
-            ? {
-                ...lastMeta,
-                count: loadedRows.length,
-              }
-            : { count: loadedRows.length },
-        );
+        const { rows, meta } = await fetchSqlServerRows({
+          endpoint: "movimientos-por-identificar",
+          searchValue,
+        });
+        setSqlMovementsRows(rows.map(normalizeSqlServerRow));
+        setSqlMovementsMeta(meta);
       } catch (error) {
         console.error("Error consultando movimientos SQL:", error);
         setSqlMovementsRows([]);
@@ -407,31 +689,116 @@ const DepositDetailModal = ({
         setSqlMovementsLoading(false);
       }
     },
-    [deposit, isBackendConnected, sqlMovementsSearch],
+    [fetchSqlServerRows, isBackendConnected, sqlMovementsSearch],
+  );
+
+  const loadSqlCortado = useCallback(
+    async (pageOverride = 1) => {
+      if (!isBackendConnected) {
+        setSqlCortadoError("Debes iniciar sesión para consultar los movimientos.");
+        return;
+      }
+
+      const period = String(sqlCortadoPeriod || "").trim();
+      if (!getSqlPeriodRangeFromYYYYMM(period)) {
+        setSqlCortadoError("Selecciona un periodo válido en formato YYYYMM, por ejemplo 202606.");
+        return;
+      }
+
+      setSqlCortadoLoading(true);
+      setSqlCortadoError("");
+
+      try {
+        const searchValue = "";
+        const safePage = Math.max(Number(pageOverride) || 1, 1);
+        const offset = (safePage - 1) * sqlCortadoPageSize;
+        const { rows, meta } = await fetchSqlServerRows({
+          endpoint: "cortado-vs-registros",
+          period,
+          searchValue,
+          filters: {
+            nroOperacion: sqlCortadoNroOperacionFilter.trim(),
+            banco: sqlCortadoBancoFilter.trim(),
+            fecha: sqlCortadoFechaFilter.trim(),
+            importe: sqlCortadoImporteFilter.trim(),
+          },
+          paginate: false,
+          limit: sqlCortadoPageSize,
+          offset,
+        });
+        setSqlCortadoRows(rows.map(normalizeSqlServerRow));
+        setSqlCortadoMeta(meta);
+        setSqlCortadoPage(safePage);
+        setSqlCortadoTotalCount(Number(meta?.totalCount || rows.length || 0));
+      } catch (error) {
+        console.error("Error consultando cortado SQL:", error);
+        setSqlCortadoRows([]);
+        setSqlCortadoMeta(null);
+        setSqlCortadoTotalCount(0);
+        setSqlCortadoError(error.message || "No se pudieron cargar los movimientos.");
+      } finally {
+        setSqlCortadoLoading(false);
+      }
+    },
+    [
+      fetchSqlServerRows,
+      isBackendConnected,
+      sqlCortadoBancoFilter,
+      sqlCortadoFechaFilter,
+      sqlCortadoImporteFilter,
+      sqlCortadoNroOperacionFilter,
+      sqlCortadoPageSize,
+      sqlCortadoPeriod,
+    ],
   );
 
   const exportSqlMovementsToExcel = useCallback(async () => {
-    if (!sqlMovementsRows.length) {
+    const rowsToExport = sqlActiveTab === "cortado" ? sqlCortadoRows : sqlMovementsRows;
+
+    if (!rowsToExport.length) {
       setSqlMovementsError("No hay movimientos para exportar.");
       return;
     }
 
     try {
       const { utils, writeFile } = await import("xlsx");
-      const exportRows = sqlMovementsRows.map((row) => ({
-        Fecha: formatSqlMovementDate(row.FECHA),
-        Banco: row.BANCO || "-",
-        "Nro. operación": row.NRO_OPER || row.CUO || "-",
-        Descripción: row.DESCRIPCION || "-",
-        Abono: Number(row.ABONO || 0),
-        Reg: Number(row.REG || 0),
-        Sucursal: row.Sucursal || "-",
-        Contacto: row.Contacto || "-",
-        "Teléfono contacto": row.TelefonoContacto || "-",
-        ValidadoPor: row.ValidadoPor || "-",
-        "Fecha recibido": formatSqlMovementDate(row.FechaRecibido),
-        Observación: row.OBSERVACION || "-",
-      }));
+      const exportRows =
+        sqlActiveTab === "cortado"
+          ? rowsToExport.map((row) => ({
+              ID: row.ID || "-",
+              Periodo: row.PERIODO || "-",
+              Banco: row.BANCO || "-",
+              CUO: row.CUO || "-",
+              Cta: row.CTA || "-",
+              Fecha: formatSqlMovementDate(row.FECHA),
+              Descripción: row.DESCRIPCION || "-",
+              NroOperacion: row.NRO_OPER || "-",
+              Cargo: Number(row.CARGO || 0),
+              Abono: Number(row.ABONO || 0),
+              SD: row.SD || "-",
+              Comp: row.COMP || "-",
+              Tipo: row.TIPO || "-",
+              Doc: row.DOC || "-",
+              Area: row.AREA || "-",
+              Registro: row.REGISTRO || "-",
+              Reg: Number(row.REG || 0),
+              Dif: Number(row.DIF || 0),
+              Observación: row.OBSERVACION || "-",
+            }))
+          : rowsToExport.map((row) => ({
+              Fecha: formatSqlMovementDate(row.FECHA),
+              Banco: row.BANCO || "-",
+              "Nro. operación": row.NRO_OPER || row.CUO || "-",
+              Descripción: row.DESCRIPCION || "-",
+              Abono: Number(row.ABONO || 0),
+              Reg: Number(row.REG || 0),
+              Sucursal: row.Sucursal || "-",
+              Contacto: row.Contacto || "-",
+              "Teléfono contacto": row.TelefonoContacto || "-",
+              ValidadoPor: row.ValidadoPor || "-",
+              "Fecha recibido": formatSqlMovementDate(row.FechaRecibido),
+              Observación: row.OBSERVACION || "-",
+            }));
 
       const ws = utils.json_to_sheet(exportRows);
       ws["!cols"] = [
@@ -450,43 +817,196 @@ const DepositDetailModal = ({
       ];
 
       const wb = utils.book_new();
-      utils.book_append_sheet(wb, ws, "Movimientos");
+      utils.book_append_sheet(wb, ws, sqlActiveTab === "cortado" ? "Cortado" : "Movimientos");
 
       const exportDate = new Date();
       const suffix = `${exportDate.getFullYear()}${String(exportDate.getMonth() + 1).padStart(2, "0")}${String(
         exportDate.getDate(),
       ).padStart(2, "0")}`;
-      const fileName = `movimientos_por_identificar_${suffix}.xlsx`;
+      const fileName =
+        sqlActiveTab === "cortado"
+          ? `cortado_vs_registros_${suffix}.xlsx`
+          : `movimientos_por_identificar_${suffix}.xlsx`;
       writeFile(wb, fileName);
     } catch (error) {
       console.error("Error exportando movimientos a Excel:", error);
       setSqlMovementsError(error.message || "No se pudo exportar a Excel.");
     }
-  }, [sqlMovementsRows]);
+  }, [sqlActiveTab, sqlCortadoRows, sqlMovementsRows]);
+
+  const exportSqlCortadoToExcel = useCallback(() => {
+    if (sqlActiveTab !== "cortado") return;
+    return exportSqlMovementsToExcel();
+  }, [exportSqlMovementsToExcel, sqlActiveTab]);
 
   const openSqlMovementsModal = useCallback(() => {
     if (!deposit?.es_antiguo) return;
     setSqlMovementsError("");
+    setSqlMovementsActionMessage("");
+    setSqlCortadoError("");
     setSqlMovementsRows([]);
     setSqlMovementsMeta(null);
+    setSqlCortadoRows([]);
+    setSqlCortadoMeta(null);
+    setSqlCortadoPeriod("");
+    setSqlActiveTab("movimientos");
+    setSqlSelectedMovement(null);
     setIsSqlMovementsModalOpen(true);
     void loadSqlMovements("");
   }, [deposit?.es_antiguo, loadSqlMovements]);
 
-  const applySqlMovementToDeposit = useCallback(
-    (row) => {
+  const extractSqlSelectionValues = useCallback((row) => {
+    const selectedRow = row || null;
+    const selectedNroOperacion = String(
+      row?.NRO_OPER ??
+        row?.NRO_OPERACION ??
+        row?.numero_operacion_banco ??
+        row?.numero_operacion ??
+        row?.CUO ??
+        row?.CUOA ??
+        "",
+    ).trim();
+    const selectedFechaDeposito = normalizeDateForInput(
+      row?.FECHA ?? row?.fecha ?? row?.fecha_deposito ?? "",
+    );
+    const selectedMontoRaw = row?.ABONO ?? 0;
+    const selectedMonto =
+      typeof selectedMontoRaw === "string"
+        ? Number(selectedMontoRaw.replace(/[^\d.-]/g, ""))
+        : Number(selectedMontoRaw);
+
+    return {
+      selectedRow,
+      selectedNroOperacion,
+      selectedFechaDeposito,
+      selectedMonto,
+    };
+  }, []);
+
+  const applySqlMovementSelectionToDeposit = useCallback(async (row) => {
+    const {
+      selectedRow,
+      selectedNroOperacion,
+      selectedFechaDeposito,
+      selectedMonto,
+    } = extractSqlSelectionValues(row);
+
+    setSqlSelectedMovement(selectedRow);
+
+    setEditableData((prev) => ({
+      ...prev,
+      numero_operacion_banco: selectedNroOperacion || prev.numero_operacion_banco,
+      fecha_deposito: selectedFechaDeposito || prev.fecha_deposito,
+      monto: Number.isFinite(selectedMonto) && selectedMonto > 0 ? selectedMonto : prev.monto,
+    }));
+
+    onUpdateDeposit({
+      ...deposit,
+      numero_operacion_banco:
+        selectedNroOperacion || deposit?.numero_operacion_banco || deposit?.numero_operacion || "",
+      numero_operacion:
+        selectedNroOperacion || deposit?.numero_operacion || deposit?.numero_operacion_banco || "",
+      fecha_deposito: selectedFechaDeposito || deposit?.fecha_deposito || null,
+      monto: Number.isFinite(selectedMonto) && selectedMonto > 0 ? selectedMonto : deposit?.monto || 0,
+    });
+  }, [deposit, extractSqlSelectionValues, onUpdateDeposit]);
+
+  const handleSelectSqlMovement = useCallback(async (row) => {
+    setSqlSelectedMovement(row || null);
+    await applySqlMovementSelectionToDeposit(row);
+    setSqlSelectionToast("Campos cargados desde Movimientos por identificar.");
+    closeSqlMovementsModal();
+  }, [applySqlMovementSelectionToDeposit, closeSqlMovementsModal]);
+
+  const handleSelectSqlCortado = useCallback(async (row) => {
+    setSqlSelectedMovement(row || null);
+    await applySqlMovementSelectionToDeposit(row);
+    setSqlSelectionToast("Campos cargados desde Cortado vs RegistrosConcar.");
+    closeSqlMovementsModal();
+  }, [applySqlMovementSelectionToDeposit, closeSqlMovementsModal]);
+
+  const persistSelectedSqlTipoIfNeeded = useCallback(async () => {
+    if (!sqlSelectedMovementId) {
+      return null;
+    }
+
+    if (!isBackendConnected) {
+      throw new Error("Debes iniciar sesión para ejecutar la actualización SQL.");
+    }
+
+    const tipo = getSqlMovementSelectionLabel(deposit);
+    if (!tipo) {
+      throw new Error("No se pudo resolver la persona y la sucursal del card.");
+    }
+
+    const { empresa, empresaNombre } = getSqlServerCompanyConfigFromEmpresaId(
+      editableData.empresa_id,
+      empresas,
+    );
+    if (!empresa) {
+      throw new Error("Selecciona una empresa válida en el modal Detalle depósito.");
+    }
+
+    const response = await apiPost("/sqlserver/cortado-asignar-tipo", {
+      empresa,
+      empresaNombre,
+      id: sqlSelectedMovementId,
+      tipo,
+    });
+
+    const updatedTipo = response?.data?.tipo || tipo;
+    setSqlMovementsRows((prev) =>
+      prev.map((item) =>
+        String(item.ID) === String(sqlSelectedMovementId)
+          ? {
+              ...item,
+              TIPO: updatedTipo,
+            }
+          : item,
+      ),
+    );
+    setSqlSelectedMovement((prev) =>
+      prev && String(prev.ID) === String(sqlSelectedMovementId)
+        ? {
+            ...prev,
+            TIPO: updatedTipo,
+          }
+        : prev,
+    );
+    return response;
+  }, [deposit, isBackendConnected, sqlSelectedMovementId]);
+
+  const sqlActiveVoucherUrl = useMemo(() => {
+    const selectedMovementVoucher =
+      sqlSelectedMovement?.URL_VOUCHER || sqlSelectedMovement?.url_voucher || "";
+
+    if (sqlActiveTab === "movimientos" && selectedMovementVoucher) {
+      return selectedMovementVoucher;
+    }
+
+    let voucherUrl = editableData.imagen_voucher || deposit?.imagen_voucher || "";
+    if (
+      voucherUrl &&
+      voucherUrl.includes("drive.google.com/file/d/")
+    ) {
+      const fileId = voucherUrl.split("/d/")[1].split("/")[0];
+      voucherUrl = `https://drive.google.com/file/d/${fileId}/preview`;
+    }
+    return voucherUrl;
+  }, [
+    deposit?.imagen_voucher,
+    editableData.imagen_voucher,
+    sqlActiveTab,
+    sqlSelectedMovement?.URL_VOUCHER,
+    sqlSelectedMovement?.url_voucher,
+  ]);
+
+  const executeSqlMovementSelection = useCallback(
+    async (row) => {
       if (!row) return;
-
-      setEditableData((prev) => ({
-        ...prev,
-        monto: Number(row.ABONO || 0),
-        fecha_deposito: normalizeDateForInput(row.FECHA),
-        numero_operacion_banco: String(row.NRO_OPER || row.CUO || "").trim(),
-      }));
-
-      setIsSqlMovementsModalOpen(false);
+      await handleSelectSqlMovement(row);
     },
-    [setEditableData],
+    [handleSelectSqlMovement],
   );
 
   // Función para buscar trabajadores
@@ -820,7 +1340,7 @@ const DepositDetailModal = ({
           isDuplicate: true,
           message:
             response.message ||
-            `Alerta de duplicado: se encontraron ${duplicates.length} depósito(s) con los mismos datos.`,
+            `¡Alerta de Duplicado! Se encontraron ${duplicates.length} depósito(s) con los mismos datos.`,
         });
         if (shouldUseDuplicateModals) {
           setDuplicateModalMode("duplicate");
@@ -1398,6 +1918,14 @@ ${reason}`;
       return;
     }
 
+    try {
+      await persistSelectedSqlTipoIfNeeded();
+    } catch (error) {
+      console.error("❌ Error aplicando el ID SQL antes de confirmar:", error);
+      alert(`❌ No se pudo aplicar el ID seleccionado en SQL: ${error.message}`);
+      return;
+    }
+
     // Verificar si se puede enviar mensaje (opcional)
     const telefonoDisponible =
       deposit.trabajador?.telefono_origen ||
@@ -1590,6 +2118,14 @@ _Mensaje automático del sistema de control de depósitos_`;
         camposRequeridos,
         editableData,
       });
+      return;
+    }
+
+    try {
+      await persistSelectedSqlTipoIfNeeded();
+    } catch (error) {
+      console.error("❌ Error aplicando el ID SQL antes de confirmar:", error);
+      alert(`❌ No se pudo aplicar el ID seleccionado en SQL: ${error.message}`);
       return;
     }
 
@@ -2008,10 +2544,460 @@ _Mensaje automático del sistema de control de depósitos_`;
     },
     [canUseChromeSearch, compactVoucherUrl, deposit, editableData.monto, editableData.numero_operacion_banco],
   );
+  const sqlMovementsModalPortal =
+    typeof document !== "undefined"
+      ? createPortal(
+          <AnimatePresence>
+            {isSqlMovementsModalOpen && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[170] flex items-center justify-center bg-black/70 p-4"
+                onClick={closeSqlMovementsModal}
+              >
+                <motion.div
+                  initial={{ scale: 0.96, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.96, opacity: 0 }}
+                  className="flex h-[90vh] w-[98vw] max-w-[98vw] min-w-0 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 p-4 dark:border-gray-700 dark:bg-gray-800/70">
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                        {sqlMovementsMeta?.empresaNombre ||
+                          getSqlServerCompanyConfigFromEmpresaId(
+                            editableData.empresa_id,
+                            empresas,
+                          ).empresaNombre}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                        Consulta SQL Server.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeSqlMovementsModal}
+                      className="rounded-full p-2 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                      title="Cerrar"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-1 gap-4 overflow-hidden p-4">
+                    <div className="flex h-full min-h-[34rem] w-[340px] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+                      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:border-gray-700 dark:bg-gray-800/70 dark:text-slate-400">
+                        Voucher
+                      </div>
+                      <div className="min-h-0 flex-1 p-3">
+                        <div className="flex h-full min-h-0 items-stretch">
+                          {displayVoucherUrl ? (
+                            displayVoucherUrl.includes(".pdf") || displayVoucherUrl.includes("/preview") ? (
+                              <iframe src={displayVoucherUrl} title="Voucher PDF" className="h-full w-full rounded-xl border border-slate-200 bg-white dark:border-gray-700" />
+                            ) : (
+                              <img src={displayVoucherUrl} alt={"Voucher " + (deposit.numero_voucher || deposit.numero_operacion)} className="h-full w-full rounded-xl border border-slate-200 object-contain dark:border-gray-700" />
+                            )
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-sm text-slate-500 dark:border-gray-700 dark:bg-gray-950 dark:text-slate-400">
+                              No hay voucher disponible.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+                      <div className="border-b border-slate-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900/40">
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSqlActiveTab("movimientos")}
+                            className={"rounded-full px-3 py-1.5 text-xs font-semibold transition-colors " +
+                              (sqlActiveTab === "movimientos"
+                                ? "bg-slate-800 text-white"
+                                : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700")}
+                          >
+                            Movimientos por identificar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSqlActiveTab("cortado")}
+                            className={"rounded-full px-3 py-1.5 text-xs font-semibold transition-colors " +
+                              (sqlActiveTab === "cortado"
+                                ? "bg-slate-800 text-white"
+                                : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700")}
+                          >
+                            Cortado vs RegistrosConcar
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-3">
+                          {sqlActiveTab === "cortado" ? (
+                            <>
+                              <div className="w-[132px] flex-none">
+                                <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                  Periodo del reporte (YYYYMM)
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  maxLength={6}
+                                  value={sqlCortadoPeriod}
+                                  onChange={(e) => setSqlCortadoPeriod(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      void loadSqlCortado(1);
+                                    }
+                                  }}
+                                  placeholder="Ej. 202606"
+                                  className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                                />
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <div className="w-[150px] flex-none">
+                                  <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                    Nro. operación
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sqlCortadoNroOperacionFilter}
+                                    onChange={(e) => setSqlCortadoNroOperacionFilter(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void loadSqlCortado(1);
+                                      }
+                                    }}
+                                    placeholder="Ej. 123456"
+                                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                                  />
+                                </div>
+                                <div className="w-[150px] flex-none">
+                                  <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                    Banco
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sqlCortadoBancoFilter}
+                                    onChange={(e) => setSqlCortadoBancoFilter(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void loadSqlCortado(1);
+                                      }
+                                    }}
+                                    placeholder="Ej. BCP"
+                                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                                  />
+                                </div>
+                                <div className="w-[150px] flex-none">
+                                  <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                    Fecha
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={sqlCortadoFechaFilter}
+                                    onChange={(e) => setSqlCortadoFechaFilter(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void loadSqlCortado(1);
+                                      }
+                                    }}
+                                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                                  />
+                                </div>
+                                <div className="w-[150px] flex-none">
+                                  <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                    Importe
+                                  </label>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    value={sqlCortadoImporteFilter}
+                                    onChange={(e) => setSqlCortadoImporteFilter(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void loadSqlCortado(1);
+                                      }
+                                    }}
+                                    placeholder="Ej. 1500.00"
+                                    step="0.01"
+                                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                                  />
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="w-[50ch] max-w-full flex-none">
+                              <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                Buscar en movimientos
+                              </label>
+                              <input
+                                type="text"
+                                inputMode="text"
+                                value={sqlMovementsSearch}
+                                onChange={(e) => setSqlMovementsSearch(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    void loadSqlMovements(sqlMovementsSearch);
+                                  }
+                                }}
+                                placeholder="Nro. operacion, banco, sucursal, contacto, RUC, observacion..."
+                                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                              />
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sqlActiveTab === "cortado") {
+                                  void loadSqlCortado(1);
+                                } else {
+                                  void loadSqlMovements(sqlMovementsSearch);
+                                }
+                              }}
+                              disabled={sqlMovementsLoading || sqlCortadoLoading}
+                              className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {sqlMovementsLoading || sqlCortadoLoading ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Search className="h-4 w-4" />
+                              )}
+                              {sqlActiveTab === "cortado" ? "Consultar BD" : "Buscar"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSqlMovementsSearch("");
+                                setSqlCortadoPeriod("");
+                                setSqlCortadoNroOperacionFilter("");
+                                setSqlCortadoBancoFilter("");
+                                setSqlCortadoFechaFilter("");
+                                setSqlCortadoImporteFilter("");
+                                setSqlCortadoPage(1);
+                                setSqlCortadoTotalCount(0);
+                                void loadSqlMovements("");
+                              }}
+                              disabled={sqlMovementsLoading || sqlCortadoLoading}
+                              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                            >
+                              Limpiar
+                            </button>
+                          </div>
+                        </div>
+
+                        {sqlActiveTab === "movimientos" ? (
+                          <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                            <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
+                              Desde: {sqlMovementsMeta?.fechaInicio || getSqlServerDefaultRange().fechaInicio}
+                            </span>
+                            <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
+                              Hasta: {sqlMovementsMeta?.fechaFin || getSqlServerDefaultRange().fechaFin}
+                            </span>
+                          </div>
+                        ) : null}
+
+                        {sqlMovementsActionMessage ? (
+                          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-200">
+                            {sqlMovementsActionMessage}
+                          </div>
+                        ) : null}
+                        {sqlMovementsError ? (
+                          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
+                            {sqlMovementsError}
+                          </div>
+                        ) : null}
+                        {sqlCortadoError ? (
+                          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
+                            {sqlCortadoError}
+                          </div>
+                        ) : null}
+                        {sqlActiveTab === "cortado" && sqlCortadoPeriod && !/^\d{6}$/.test(sqlCortadoPeriod) ? (
+                          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+                            El periodo debe tener formato YYYYMM, por ejemplo 202606.
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        {sqlActiveTab === "movimientos" ? (
+                          sqlMovementsLoading && sqlMovementsRows.length === 0 ? (
+                            <div className="flex h-full items-center justify-center">
+                              <div className="flex flex-col items-center gap-3 text-slate-500 dark:text-slate-400">
+                                <Loader2 className="h-8 w-8 animate-spin" />
+                                <span className="text-sm">Consultando SQL Server...</span>
+                              </div>
+                            </div>
+                          ) : sqlMovementsRows.length === 0 ? (
+                            <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                              No hay movimientos para mostrar con los filtros actuales.
+                            </div>
+                          ) : (
+                            <div className="h-full overflow-x-auto overflow-y-auto">
+                              <table className="w-max min-w-max table-auto border-separate border-spacing-0 whitespace-nowrap">
+                                <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-gray-800">
+                                  <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Fecha</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 w-[15ch] max-w-[15ch]">Banco</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Nro. op.</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Descripcion</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Abono</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Reg</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Sucursal</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Contacto</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Validado por</th>
+                                    <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Observación</th>
+                                    <th className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">Accion</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-200 dark:divide-gray-800">
+                                  {sqlMovementsRows.map((row, index) => (
+                                    <tr
+                                      key={String(row.CUO || row.ID || index)}
+                                      className={"align-top text-sm transition-colors border-b-2 border-slate-300 dark:border-gray-600 " +
+                                        (String(row.REGISTRO || "").trim()
+                                          ? "bg-emerald-100/80 text-emerald-950 hover:bg-emerald-200/80 dark:bg-emerald-900/35 dark:text-emerald-50 dark:hover:bg-emerald-800/45"
+                                          : hasSqlMovementAttentionData(row)
+                                            ? "bg-orange-300/95 text-orange-950 hover:bg-orange-400/95 dark:bg-orange-900/55 dark:text-orange-50 dark:hover:bg-orange-800/60"
+                                            : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-gray-800/60")}
+                                    >
+                                      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{formatSqlMovementDate(row.FECHA)}</td>
+                                      <td className="w-[15ch] max-w-[15ch] overflow-hidden whitespace-nowrap px-4 py-3 text-ellipsis" title={row.BANCO || "-"}>{row.BANCO || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{row.NRO_OPER || row.CUO || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-xs">{row.DESCRIPCION || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.ABONO, "PEN")}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.REG, "PEN")}</td>
+                                      <td className="whitespace-nowrap px-4 py-3">{row.Sucursal || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3">
+                                        <div className="space-y-0.5">
+                                          <div>{row.Contacto || "-"}</div>
+                                          <div className="text-xs text-current/75">{row.TelefonoContacto || ""}</div>
+                                        </div>
+                                      </td>
+                                      <td className="whitespace-nowrap px-4 py-3">{row.ValidadoPor || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3">{row.Observacion || row.OBSERVACION || "-"}</td>
+                                      <td className="sticky right-0 z-10 whitespace-nowrap border-l border-slate-200 bg-inherit px-4 py-3 dark:border-gray-700 dark:bg-inherit">
+                                        <button type="button" onClick={() => void executeSqlMovementSelection(row)} className="inline-flex items-center rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-600">Seleccionar</button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )
+                        ) : (
+                          <div className="flex h-full flex-col">
+                            {sqlCortadoLoading && sqlCortadoRows.length === 0 ? (
+                              <div className="flex h-full items-center justify-center">
+                                <div className="flex flex-col items-center gap-3 text-slate-500 dark:text-slate-400">
+                                  <Loader2 className="h-8 w-8 animate-spin" />
+                                  <span className="text-sm">Consultando SQL Server...</span>
+                                </div>
+                              </div>
+                            ) : sqlCortadoRows.length === 0 ? (
+                              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                                No hay registros para mostrar con los filtros actuales.
+                              </div>
+                            ) : (
+                              <div className="h-full overflow-x-auto overflow-y-auto">
+                                <table className="w-max min-w-max table-auto border-separate border-spacing-0 whitespace-nowrap">
+                                  <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-gray-800">
+                                    <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Fecha</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Banco</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Descripcion</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Cargo</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Abono</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Reg</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Dif</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Registro</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">GLOSA</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-200 dark:divide-gray-800">
+                                    {sqlCortadoRows.map((row, index) => (
+                                      <tr
+                                        key={String(row.CUO || row.ID || index)}
+                                        className={"align-top text-sm transition-colors border-b-2 border-slate-300 dark:border-gray-600 " +
+                                          (String(row.REGISTRO || "").trim()
+                                            ? "bg-emerald-100/80 text-emerald-950 hover:bg-emerald-200/80 dark:bg-emerald-900/35 dark:text-emerald-50 dark:hover:bg-emerald-800/45"
+                                            : Number(row.DIF || 0) !== 0
+                                              ? "bg-amber-200/90 text-amber-950 hover:bg-amber-300/90 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-800/50"
+                                              : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-gray-800/60")}
+                                      >
+                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{formatSqlMovementDate(row.FECHA)}</td>
+                                        <td className="whitespace-nowrap px-4 py-3">{row.BANCO || "-"}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-xs">{row.DESCRIPCION || "-"}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.CARGO, "PEN")}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.ABONO, "PEN")}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.REG, "PEN")}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.DIF, "PEN")}</td>
+                                        <td className="whitespace-nowrap px-4 py-3">{row.REGISTRO || "-"}</td>
+                                        <td className="whitespace-nowrap px-4 py-3">{row.GLOSA || "-"}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-slate-300">
+                              <div>
+                                {sqlCortadoTotalCount
+                                  ? "Mostrando " + Math.min((sqlCortadoPage - 1) * sqlCortadoPageSize + 1, sqlCortadoTotalCount) + "-" + Math.min(sqlCortadoPage * sqlCortadoPageSize, sqlCortadoTotalCount) + " de " + sqlCortadoTotalCount
+                                  : "Sin resultados"}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button type="button" onClick={() => void loadSqlCortado(Math.max(1, sqlCortadoPage - 1))} disabled={sqlCortadoLoading || sqlCortadoPage <= 1} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">Anterior</button>
+                                <span className="min-w-[7rem] text-center font-semibold">P?gina {sqlCortadoPage} / {Math.max(1, Math.ceil((sqlCortadoTotalCount || 0) / sqlCortadoPageSize))}</span>
+                                <button type="button" onClick={() => void loadSqlCortado(sqlCortadoPage + 1)} disabled={sqlCortadoLoading || sqlCortadoPage >= Math.max(1, Math.ceil((sqlCortadoTotalCount || 0) / sqlCortadoPageSize))} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">Siguiente</button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-gray-700 dark:bg-gray-800/70 dark:text-slate-300">
+                    <div>
+                      {sqlMovementsMeta?.count != null
+                        ? sqlMovementsMeta.count + " movimiento(s) cargado(s)"
+                        : "Consulta SQL Server"}
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={exportSqlMovementsToExcel} disabled={!sqlMovementsRows.length} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+                        <Save className="h-4 w-4" />
+                        Exportar Excel
+                      </button>
+                      <button type="button" onClick={closeSqlMovementsModal} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800">
+                        Cerrar
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body,
+        )
+      : null;
 
   if (isCompactPresentation) {
     return (
-      <AnimatePresence>
+      <>
+        {sqlMovementsModalPortal}
+        <AnimatePresence>
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-0">
           <motion.div
             initial={{ scale: 0.96, opacity: 0, y: 16 }}
@@ -2677,274 +3663,22 @@ _Mensaje automático del sistema de control de depósitos_`;
             deposit={deposit}
             phoneNumber={getConversationPhoneNumber()}
           />
-          {typeof document !== "undefined" &&
-            createPortal(
-              <AnimatePresence>
-                {isSqlMovementsModalOpen && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="fixed inset-0 z-[170] flex items-center justify-center bg-black/70 p-4"
-                    onClick={closeSqlMovementsModal}
-                  >
-                    <motion.div
-                      initial={{ scale: 0.96, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      exit={{ scale: 0.96, opacity: 0 }}
-                      className="flex h-[90vh] w-[98vw] max-w-[98vw] min-w-0 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 p-4 dark:border-gray-700 dark:bg-gray-800/70">
-                        <div className="min-w-0">
-                          <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                            Movimientos por identificar
-                          </h3>
-                          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                            Consulta SQL Server desde el 1 de enero hasta hoy para la empresa del depósito.
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                            <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
-                              Empresa:{" "}
-                              {sqlMovementsMeta?.empresaNombre ||
-                                getSqlServerCompanyConfigFromDeposit(deposit).empresaNombre}
-                            </span>
-                            <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
-                              Desde: {sqlMovementsMeta?.fechaInicio || getSqlServerDefaultRange().fechaInicio}
-                            </span>
-                            <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
-                              Hasta: {sqlMovementsMeta?.fechaFin || getSqlServerDefaultRange().fechaFin}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={closeSqlMovementsModal}
-                          className="rounded-full p-2 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-gray-700 dark:hover:text-white"
-                          title="Cerrar"
-                        >
-                          <X className="h-5 w-5" />
-                        </button>
-                      </div>
 
-                      <div className="flex flex-1 gap-4 overflow-hidden p-4">
-                        <div className="flex min-w-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
-                          <div className="border-b border-slate-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900/40">
-                            <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                              <div className="flex-1">
-                                <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                                  Buscar en movimientos
-                                </label>
-                                <input
-                                  type="text"
-                                  value={sqlMovementsSearch}
-                                  onChange={(e) => setSqlMovementsSearch(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      void loadSqlMovements(sqlMovementsSearch);
-                                    }
-                                  }}
-                                  placeholder="Nro. operación, banco, sucursal, contacto, RUC, observación..."
-                                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
-                                />
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void loadSqlMovements(sqlMovementsSearch)}
-                                  disabled={sqlMovementsLoading}
-                                  className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {sqlMovementsLoading ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Search className="h-4 w-4" />
-                                  )}
-                                  Buscar
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSqlMovementsSearch("");
-                                    void loadSqlMovements("");
-                                  }}
-                                  disabled={sqlMovementsLoading}
-                                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                                >
-                                  Limpiar
-                                </button>
-                              </div>
-                            </div>
-
-                            {sqlMovementsError ? (
-                              <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-                                {sqlMovementsError}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          <div className="min-h-0 flex-1 overflow-hidden">
-                            {sqlMovementsLoading && sqlMovementsRows.length === 0 ? (
-                              <div className="flex h-full items-center justify-center">
-                                <div className="flex flex-col items-center gap-3 text-slate-500 dark:text-slate-400">
-                                  <Loader2 className="h-8 w-8 animate-spin" />
-                                  <span className="text-sm">Consultando SQL Server...</span>
-                                </div>
-                              </div>
-                            ) : sqlMovementsRows.length === 0 ? (
-                              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                                No hay movimientos para mostrar con los filtros actuales.
-                              </div>
-                            ) : (
-                              <div className="h-full overflow-x-auto overflow-y-auto">
-                                <table className="w-max min-w-max table-auto border-separate border-spacing-0 whitespace-nowrap">
-                                  <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-gray-800">
-                                    <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Fecha</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 w-[15ch] max-w-[15ch]">Banco</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Nro. op.</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Descripción</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Abono</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Reg</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Sucursal</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Contacto</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Validado por</th>
-                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Observación</th>
-                                      <th className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
-                                        Acción
-                                      </th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-200 dark:divide-gray-800">
-                                    {sqlMovementsRows.map((row, index) => (
-                                      <tr
-                                        key={`${row.CUO || row.ID || index}`}
-                                        className={`align-top text-sm transition-colors border-b-2 border-slate-300 dark:border-gray-600 ${
-                                          hasSqlMovementHighlightData(row)
-                                            ? "bg-amber-200/90 text-amber-950 hover:bg-amber-300/90 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-800/50"
-                                            : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-gray-800/60"
-                                        }`}
-                                      >
-                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                                          {formatSqlMovementDate(row.FECHA)}
-                                        </td>
-                                        <td
-                                          className="w-[15ch] max-w-[15ch] overflow-hidden whitespace-nowrap px-4 py-3 text-ellipsis"
-                                          title={row.BANCO || "-"}
-                                        >
-                                          {row.BANCO || "-"}
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                                          {row.NRO_OPER || row.CUO || "-"}
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-xs">
-                                          {row.DESCRIPCION || "-"}
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                                          {formatCompactMoney(row.ABONO, "PEN")}
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                                          {formatCompactMoney(row.REG, "PEN")}
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3">{row.Sucursal || "-"}</td>
-                                        <td className="whitespace-nowrap px-4 py-3">
-                                          <div className="space-y-0.5">
-                                            <div>{row.Contacto || "-"}</div>
-                                            <div className="text-xs text-current/75">
-                                              {row.TelefonoContacto || ""}
-                                            </div>
-                                          </div>
-                                        </td>
-                                        <td className="whitespace-nowrap px-4 py-3">{row.ValidadoPor || "-"}</td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-xs">
-                                          {row.OBSERVACION || "-"}
-                                        </td>
-                                        <td className="sticky right-0 z-10 whitespace-nowrap border-l border-slate-200 bg-inherit px-4 py-3 dark:border-gray-700 dark:bg-inherit">
-                                          <button
-                                            type="button"
-                                            onClick={() => applySqlMovementToDeposit(row)}
-                                            className="inline-flex items-center rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-600"
-                                          >
-                                            Seleccionar
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex w-[320px] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
-                          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:border-gray-700 dark:bg-gray-800/70 dark:text-slate-400">
-                            Voucher
-                          </div>
-                          <div className="min-h-0 flex-1 p-3">
-                            <div className="flex h-full min-h-0 items-stretch">
-                              {displayVoucherUrl ? (
-                                displayVoucherUrl.includes(".pdf") || displayVoucherUrl.includes("/preview") ? (
-                                  <iframe
-                                    src={displayVoucherUrl}
-                                    title="Voucher PDF"
-                                    className="h-full w-full rounded-xl border border-slate-200 bg-white dark:border-gray-700"
-                                  />
-                                ) : (
-                                  <img
-                                    src={displayVoucherUrl}
-                                    alt={`Voucher ${deposit.numero_voucher || deposit.numero_operacion}`}
-                                    className="h-full w-full rounded-xl border border-slate-200 object-contain dark:border-gray-700"
-                                  />
-                                )
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-sm text-slate-500 dark:border-gray-700 dark:bg-gray-950 dark:text-slate-400">
-                                  No hay voucher disponible.
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-gray-700 dark:bg-gray-800/70 dark:text-slate-300">
-                    <div>
-                      {sqlMovementsMeta?.count != null
-                        ? `${sqlMovementsMeta.count} movimiento(s) cargado(s)`
-                        : "Consulta SQL Server"}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={exportSqlMovementsToExcel}
-                        disabled={!sqlMovementsRows.length}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Save className="h-4 w-4" />
-                        Exportar Excel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={closeSqlMovementsModal}
-                        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                      >
-                        Cerrar
-                      </button>
-                    </div>
-                  </div>
-                  </motion.div>
-                </motion.div>
-                )}
-              </AnimatePresence>,
-              document.body,
-            )}
         </div>
-      </AnimatePresence>
+        </AnimatePresence>
+      </>
     );
   }
 
+
   return (
     <>
+      {sqlMovementsModalPortal}
+      {sqlSelectionToast ? (
+        <div className="fixed left-1/2 top-4 z-[220] -translate-x-1/2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-lg dark:border-emerald-900/60 dark:bg-emerald-900/30 dark:text-emerald-100">
+          {sqlSelectionToast}
+        </div>
+      ) : null}
       <div
         className={`fixed inset-0 z-50 flex items-center justify-center ${
           isCompactPresentation ? "bg-black/45 p-2 md:p-3" : "bg-black/60 dark:bg-black/70 p-4"
@@ -3375,14 +4109,14 @@ _Mensaje automático del sistema de control de depósitos_`;
                                 )}
                                 <span className="whitespace-pre-line">{checkResult.message}</span>
                               </div>
-                              {isCompactPresentation &&
-                                checkResult.isDuplicate &&
+                              {checkResult.isDuplicate &&
                                 duplicateDeposits.length > 0 && (
                                   <button
-                                    onClick={() =>
-                                      setIsDuplicatesModalOpen(true)
-                                    }
-                                    className="ml-3 px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-medium flex items-center space-x-1 flex-shrink-0"
+                                    onClick={() => {
+                                      setDuplicateModalMode("duplicate");
+                                      setIsDuplicatesModalOpen(true);
+                                    }}
+                                    className="ml-3 inline-flex items-center space-x-1 rounded bg-red-600 px-2 py-1 text-xs font-medium text-white flex-shrink-0 hover:bg-red-700"
                                   >
                                     <Eye size={12} />
                                     <span>Ver Duplicados</span>
@@ -3909,274 +4643,6 @@ _Mensaje automático del sistema de control de depósitos_`;
         deposit={deposit}
         phoneNumber={getConversationPhoneNumber()}
       />
-      {typeof document !== "undefined" &&
-        createPortal(
-          <AnimatePresence>
-            {isSqlMovementsModalOpen && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[170] flex items-center justify-center bg-black/70 p-4"
-                onClick={closeSqlMovementsModal}
-              >
-                <motion.div
-                  initial={{ scale: 0.96, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.96, opacity: 0 }}
-                  className="flex h-[90vh] w-[98vw] max-w-[98vw] min-w-0 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 p-4 dark:border-gray-700 dark:bg-gray-800/70">
-                    <div className="min-w-0">
-                      <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                        Movimientos por identificar
-                      </h3>
-                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                        Consulta SQL Server desde el 1 de enero hasta hoy para la empresa del depósito.
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                        <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
-                          Empresa:{" "}
-                          {sqlMovementsMeta?.empresaNombre ||
-                            getSqlServerCompanyConfigFromDeposit(deposit).empresaNombre}
-                        </span>
-                        <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
-                          Desde: {sqlMovementsMeta?.fechaInicio || getSqlServerDefaultRange().fechaInicio}
-                        </span>
-                        <span className="rounded-full bg-slate-200 px-2 py-1 dark:bg-slate-700">
-                          Hasta: {sqlMovementsMeta?.fechaFin || getSqlServerDefaultRange().fechaFin}
-                        </span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={closeSqlMovementsModal}
-                      className="rounded-full p-2 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-gray-700 dark:hover:text-white"
-                      title="Cerrar"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
-                  </div>
-
-                <div className="flex flex-1 gap-4 overflow-hidden p-4">
-                  <div className="flex min-w-0 flex-[1.35] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
-                    <div className="border-b border-slate-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900/40">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                        <div className="flex-1">
-                          <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                            Buscar en movimientos
-                          </label>
-                          <input
-                            type="text"
-                            value={sqlMovementsSearch}
-                            onChange={(e) => setSqlMovementsSearch(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                void loadSqlMovements(sqlMovementsSearch);
-                              }
-                            }}
-                            placeholder="Nro. operación, banco, sucursal, contacto, RUC, observación..."
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-colors focus:border-slate-500 focus:ring-2 focus:ring-slate-500/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
-                          />
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void loadSqlMovements(sqlMovementsSearch)}
-                            disabled={sqlMovementsLoading}
-                            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {sqlMovementsLoading ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Search className="h-4 w-4" />
-                            )}
-                            Buscar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSqlMovementsSearch("");
-                              void loadSqlMovements("");
-                            }}
-                            disabled={sqlMovementsLoading}
-                            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                          >
-                            Limpiar
-                          </button>
-                        </div>
-                      </div>
-
-                      {sqlMovementsError ? (
-                        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-900/20 dark:text-rose-200">
-                          {sqlMovementsError}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      {sqlMovementsLoading && sqlMovementsRows.length === 0 ? (
-                        <div className="flex h-full items-center justify-center">
-                          <div className="flex flex-col items-center gap-3 text-slate-500 dark:text-slate-400">
-                            <Loader2 className="h-8 w-8 animate-spin" />
-                            <span className="text-sm">Consultando SQL Server...</span>
-                          </div>
-                        </div>
-                      ) : sqlMovementsRows.length === 0 ? (
-                        <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                          No hay movimientos para mostrar con los filtros actuales.
-                        </div>
-                      ) : (
-                        <div className="h-full overflow-x-auto overflow-y-auto">
-                          <table className="w-max min-w-max table-auto border-separate border-spacing-0 whitespace-nowrap">
-                            <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-gray-800">
-                              <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Fecha</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 w-[15ch] max-w-[15ch]">Banco</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Nro. op.</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Descripción</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Abono</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Reg</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Sucursal</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Contacto</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Validado por</th>
-                                <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Observación</th>
-                                <th className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
-                                  Acción
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-200 dark:divide-gray-800">
-                              {sqlMovementsRows.map((row, index) => (
-                                <tr
-                                  key={`${row.CUO || row.ID || index}`}
-                                  className={`align-top text-sm transition-colors border-b-2 border-slate-300 dark:border-gray-600 ${
-                                    hasSqlMovementHighlightData(row)
-                                      ? "bg-amber-200/90 text-amber-950 hover:bg-amber-300/90 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-800/50"
-                                      : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-gray-800/60"
-                                  }`}
-                                >
-                                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                                    {formatSqlMovementDate(row.FECHA)}
-                                  </td>
-                                  <td
-                                    className="w-[15ch] max-w-[15ch] overflow-hidden whitespace-nowrap px-4 py-3 text-ellipsis"
-                                    title={row.BANCO || "-"}
-                                  >
-                                    {row.BANCO || "-"}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                                    {row.NRO_OPER || row.CUO || "-"}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-xs">
-                                    {row.DESCRIPCION || "-"}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                                    {formatCompactMoney(row.ABONO, "PEN")}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono">
-                                    {formatCompactMoney(row.REG, "PEN")}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3">{row.Sucursal || "-"}</td>
-                                  <td className="whitespace-nowrap px-4 py-3">
-                                    <div className="space-y-0.5">
-                                      <div>{row.Contacto || "-"}</div>
-                                      <div className="text-xs text-current/75">
-                                        {row.TelefonoContacto || ""}
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3">{row.ValidadoPor || "-"}</td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-xs">
-                                    {row.OBSERVACION || "-"}
-                                  </td>
-                                  <td className="sticky right-0 z-10 whitespace-nowrap border-l border-slate-200 bg-inherit px-4 py-3 dark:border-gray-700 dark:bg-inherit">
-                                    <button
-                                      type="button"
-                                      onClick={() => applySqlMovementToDeposit(row)}
-                                      className="inline-flex items-center rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-600"
-                                    >
-                                      Seleccionar
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex w-[320px] shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-900/40">
-                    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:border-gray-700 dark:bg-gray-800/70 dark:text-slate-400">
-                      Voucher
-                    </div>
-                    <div className="min-h-0 flex-1 p-3">
-                      <div className="flex h-full min-h-0 items-stretch">
-                        {displayVoucherUrl ? (
-                          displayVoucherUrl.includes(".pdf") || displayVoucherUrl.includes("/preview") ? (
-                            <iframe
-                              src={displayVoucherUrl}
-                              title="Voucher PDF"
-                              className="h-full w-full rounded-xl border border-slate-200 bg-white dark:border-gray-700"
-                            />
-                          ) : (
-                            <img
-                              src={displayVoucherUrl}
-                              alt={`Voucher ${deposit.numero_voucher || deposit.numero_operacion}`}
-                              className="h-full w-full rounded-xl border border-slate-200 object-contain dark:border-gray-700"
-                            />
-                          )
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-sm text-slate-500 dark:border-gray-700 dark:bg-gray-950 dark:text-slate-400">
-                            No hay voucher disponible.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                  <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-gray-700 dark:bg-gray-800/70 dark:text-slate-300">
-                    <div>
-                      {sqlMovementsMeta?.count != null
-                        ? `${sqlMovementsMeta.count} movimiento(s) cargado(s)`
-                        : "Consulta SQL Server"}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={exportSqlMovementsToExcel}
-                        disabled={!sqlMovementsRows.length}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Save className="h-4 w-4" />
-                        Exportar Excel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={closeSqlMovementsModal}
-                        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                      >
-                        Cerrar
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>,
-          document.body,
-        )}
-      {isPickerOpen && (
-        <GoogleDrivePicker
-          onClose={() => setIsPickerOpen(false)}
-          onFileSelect={handleFileSelectFromPicker}
-        />
-      )}
       {typeof document !== "undefined" &&
         createPortal(
           <AnimatePresence>

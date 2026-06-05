@@ -1,6 +1,7 @@
 import React from "react";
 import { Menu, Bell, Search, User } from "lucide-react";
 import ConnectionIndicator from "./ConnectionIndicator";
+import DailyAttendanceSummary from "./DailyAttendanceSummary";
 
 const Header = ({
   onMenuClick,
@@ -9,6 +10,8 @@ const Header = ({
     realtimeStatus: null,
     realtimeErrors: 0,
   },
+  selectedDate = null,
+  attendanceSummary = [],
 }) => {
   return (
     <header className="bg-white border-b border-gray-200 px-4 py-3">
@@ -20,6 +23,11 @@ const Header = ({
           >
             <Menu size={20} />
           </button>
+          <DailyAttendanceSummary
+            selectedDate={selectedDate}
+            items={attendanceSummary}
+            className="hidden xl:block"
+          />
         </div>
 
         <div className="flex items-center space-x-4">

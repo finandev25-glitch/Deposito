@@ -1,12 +1,15 @@
 import React from "react";
 import { Bell, Menu, RefreshCw, ShieldCheck } from "lucide-react";
 import ConnectionIndicator from "./ConnectionIndicator";
+import DailyAttendanceSummary from "./DailyAttendanceSummary";
 
 const MobileHeader = ({
   onMenuClick,
   connectionStatus,
   compactMode = false,
   realtimeActivity = null,
+  selectedDate = null,
+  attendanceSummary = [],
 }) => {
   return (
     <header
@@ -35,6 +38,12 @@ const MobileHeader = ({
             className="self-start"
           />
         )}
+        <DailyAttendanceSummary
+          selectedDate={selectedDate}
+          items={attendanceSummary}
+          compact={compactMode}
+          className="pt-1"
+        />
       </div>
 
       <div className="flex items-center gap-2 shrink-0">

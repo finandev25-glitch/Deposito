@@ -101,7 +101,7 @@ const KanbanView = ({
   realtimeActivity,
   detailPresentationMode = "default",
 }) => {
-  const { currentUser } = useContext(AuthContext);
+  const { currentUser, users } = useContext(AuthContext);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [amountSearch, setAmountSearch] = useState("");
@@ -131,6 +131,21 @@ const KanbanView = ({
   // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
   const isCompactKanban = detailPresentationMode === "compact";
+
+  const getUserInitials = useCallback((name) => {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) return "??";
+
+    return (
+      cleanName
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0])
+        .join("")
+        .toUpperCase() || "??"
+    );
+  }, []);
 
   // Fetch deposits cuando cambia la fecha específica (incluyendo montaje inicial)
   useEffect(() => {
@@ -455,6 +470,39 @@ const KanbanView = ({
     return filtered;
   }, [deposits, debouncedSearchTerm, amountSearch, branchPersonSearch]);
 
+  const attendedUsersSummary = useMemo(() => {
+    const userList = Array.isArray(users) ? users : [];
+    const countsByKey = new Map();
+
+    filteredDeposits.forEach((deposit) => {
+      const validatorId = deposit?.validado_por ?? deposit?.validado_por_usuario?.id ?? null;
+      const validatorName = String(
+        deposit?.validado_por_usuario?.nombre ||
+          deposit?.validado_por_nombre ||
+          deposit?.validado_por ||
+          "",
+      ).trim();
+
+      if (!validatorId && !validatorName) return;
+
+      const resolvedUser = validatorId
+        ? userList.find((user) => String(user.id) === String(validatorId)) || null
+        : null;
+
+      const key = String(resolvedUser?.id || validatorId || validatorName.toLowerCase());
+      const name = resolvedUser?.nombre || validatorName || resolvedUser?.usuario || "Usuario";
+
+      const current = countsByKey.get(key) || { key, name, count: 0 };
+      current.count += 1;
+      current.name = name;
+      countsByKey.set(key, current);
+    });
+
+    return Array.from(countsByKey.values())
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "es"));
+  }, [filteredDeposits, users]);
+
   const groupedDeposits = useMemo(() => {
     const grouped = filteredDeposits.reduce((acc, deposit) => {
       if (!acc[deposit.estado]) {
@@ -527,8 +575,11 @@ const KanbanView = ({
         timestamp: new Date().toISOString(),
       });
 
+      console.log("📂 KANBAN: Abriendo modal de forma optimista");
+      setSelectedDeposit(deposit);
+
       if (deposit.estado === "pendiente" && currentUser) {
-        console.log("🔄 KANBAN: Es pendiente, llamando onTakeDeposit...");
+        console.log("🔄 KANBAN: Es pendiente, llamando onTakeDeposit en segundo plano...");
         console.log("⏳ KANBAN: Esperando respuesta del servidor...");
 
         const startTime = Date.now();
@@ -548,21 +599,16 @@ const KanbanView = ({
         });
 
         if (updatedDeposit) {
-          console.log("✅ KANBAN: Abriendo modal con depósito actualizado");
+          console.log("✅ KANBAN: Sincronizando modal con depósito actualizado");
           setSelectedDeposit(updatedDeposit);
         } else {
           console.error(
-            "❌ KANBAN: onTakeDeposit devolvió null/undefined - NO SE ABRIRÁ EL MODAL",
+            "❌ KANBAN: onTakeDeposit devolvió null/undefined - el modal ya fue abierto, pero la toma falló",
           );
           alert(
             "No se pudo tomar el depósito para validación. Revisa la consola para más detalles.",
           );
         }
-      } else {
-        console.log(
-          "📂 KANBAN: No es pendiente o no hay usuario, abriendo directamente",
-        );
-        setSelectedDeposit(deposit);
       }
 
       console.log("🎬 KANBAN: Fin de handleCardClick");
@@ -603,35 +649,57 @@ const KanbanView = ({
     <>
       <div className="h-full p-6 flex flex-col bg-gray-50 dark:bg-gray-950">
         {/* Header con título y botones en la misma línea */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-4 flex-shrink-0">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+        <div className="flex flex-col gap-3 mb-4 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
               Kanban de Depósitos
             </h2>
-            <p className="text-gray-600 dark:text-gray-400">
-              Visualiza y gestiona el estado de los depósitos.
-            </p>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {showConnectionStatus && connectionStatus && (
+                <div className="rounded-full border border-gray-200 bg-white/80 px-3 py-2 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/80">
+                  <ConnectionIndicator
+                    supabaseConnected={connectionStatus.supabaseConnected}
+                    realtimeStatus={connectionStatus.realtimeStatus}
+                    realtimeErrors={connectionStatus.realtimeErrors}
+                  />
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowContactosModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
+                title="Ver todos los contactos"
+              >
+                <MessageCircle size={18} />
+                <span className="hidden sm:inline">Contactos</span>
+              </button>
+            </div>
           </div>
 
-          {showConnectionStatus && connectionStatus && (
-            <div className="rounded-full border border-gray-200 bg-white/80 px-3 py-2 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/80">
-              <ConnectionIndicator
-                supabaseConnected={connectionStatus.supabaseConnected}
-                realtimeStatus={connectionStatus.realtimeStatus}
-                realtimeErrors={connectionStatus.realtimeErrors}
-              />
+          {attendedUsersSummary.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {attendedUsersSummary.map((user) => (
+                <div
+                  key={user.key}
+                  className="flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-2 py-1 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-gray-900/90"
+                  title={`${user.name}: ${user.count} depósito${user.count === 1 ? "" : "s"} atendido${user.count === 1 ? "" : "s"}`}
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-slate-800 to-slate-600 text-[11px] font-bold text-white dark:from-slate-100 dark:to-slate-300 dark:text-slate-900">
+                    {getUserInitials(user.name)}
+                  </div>
+                  <div className="pr-1">
+                    <div className="max-w-[10rem] truncate text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      {user.name}
+                    </div>
+                    <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                      {user.count} atendido{user.count === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
-
-          {/* Botón Contactos junto al título */}
-          <button
-            onClick={() => setShowContactosModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
-            title="Ver todos los contactos"
-          >
-            <MessageCircle size={18} />
-            <span className="hidden sm:inline">Contactos</span>
-          </button>
         </div>
 
         {/* Filtros y búsqueda en una segunda línea */}
@@ -1141,14 +1209,14 @@ const KanbanView = ({
           <DepositDetailModal
             deposit={selectedDeposit}
             onClose={handleCloseModal}
-            onUpdateDeposit={onUpdateDeposit}
-            empresas={empresas}
-            bancos={bancos}
-            cuentas={cuentas}
-            onOpenVoucherWindow={onOpenVoucherWindow}
-            presentationMode={detailPresentationMode}
-          />
-        )}
+          onUpdateDeposit={onUpdateDeposit}
+          empresas={empresas}
+          bancos={bancos}
+          cuentas={cuentas}
+          onOpenVoucherWindow={onOpenVoucherWindow}
+          presentationMode={detailPresentationMode}
+        />
+      )}
         {showContactosModal && (
           <ContactosModal onClose={() => setShowContactosModal(false)} />
         )}
@@ -1158,3 +1226,4 @@ const KanbanView = ({
 };
 
 export default KanbanView;
+

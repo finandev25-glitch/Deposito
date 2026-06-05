@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect, useMemo, useState } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Loader2, XCircle } from "lucide-react";
 import { AuthContext } from "./contexts/AuthContext.jsx";
@@ -73,6 +73,38 @@ function App({ uiMode = "default" }) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(isExtensionMode);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const detailPresentationMode = isExtensionMode ? "compact" : "default";
+  const attendanceSummary = useMemo(() => {
+    if (!currentSelectedDate) return [];
+
+    const counts = new Map();
+
+    depositsWithFullData.forEach((deposit) => {
+      if (!deposit || deposit.fecha_solo_date !== currentSelectedDate) {
+        return;
+      }
+
+      if (deposit.estado === "pendiente") {
+        return;
+      }
+
+      const assignedUser = String(
+        deposit.validado_por_usuario?.nombre ||
+          deposit.validado_por_nombre ||
+          deposit.validado_por ||
+          "Sin asignar",
+      ).trim();
+
+      if (!assignedUser) {
+        return;
+      }
+
+      counts.set(assignedUser, (counts.get(assignedUser) || 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "es"));
+  }, [currentSelectedDate, depositsWithFullData]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -184,6 +216,8 @@ function App({ uiMode = "default" }) {
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
         compactMode={isExtensionMode}
+        selectedDate={currentSelectedDate}
+        attendanceSummary={attendanceSummary}
       />
       <div
         className={`flex min-w-0 flex-1 flex-col ${
@@ -201,6 +235,8 @@ function App({ uiMode = "default" }) {
           }}
           compactMode={isExtensionMode}
           realtimeActivity={realtimeActivity}
+          selectedDate={currentSelectedDate}
+          attendanceSummary={attendanceSummary}
         />
         <main className="flex-1 overflow-y-auto">
           <Routes>
