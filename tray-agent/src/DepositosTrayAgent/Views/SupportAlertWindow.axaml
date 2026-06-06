@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DepositosTrayAgent.Views.SupportAlertWindow"
+        Width="380"
+        Height="200"
+        Background="Transparent"
+        Foreground="White"
+        CanResize="False"
+        SystemDecorations="None"
+        TransparencyLevelHint="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        WindowStartupLocation="Manual">
+  <Border x:Name="RootBorder"
+          Background="#991B1B"
+          BorderBrush="#FCA5A5"
+          BorderThickness="1"
+          Padding="12"
+          CornerRadius="18">
+    <StackPanel Spacing="8">
+      <Border Background="#7F1D1D" CornerRadius="12" Padding="10,8">
+        <StackPanel Spacing="2">
+          <TextBlock Text="NECESITO APOYO" FontSize="22" FontWeight="Bold" Foreground="#E2E8F0" />
+          <TextBlock Text="Solicitud pendiente del equipo" Opacity="0.9" FontSize="11" Foreground="#CBD5E1" />
+        </StackPanel>
+      </Border>
+
+      <Border Background="#111827" BorderBrush="#334155" BorderThickness="1" CornerRadius="12" Padding="10">
+        <TextBlock x:Name="ReasonText"
+                   TextWrapping="Wrap"
+                   FontSize="14"
+                   LineHeight="18"
+                   Foreground="#E2E8F0" />
+      </Border>
+
+      <StackPanel Orientation="Horizontal"
+                  HorizontalAlignment="Right"
+                  Spacing="8"
+                  Margin="0,0,0,0">
+        <Button x:Name="OpenDashboardButton"
+                Padding="0"
+                Background="Transparent"
+                BorderThickness="0"
+                MinWidth="126">
+          <Border Background="#2563EB"
+                  BorderBrush="#93C5FD"
+                  BorderThickness="1"
+                  CornerRadius="14"
+                  Padding="11,8">
+            <TextBlock Text="Abrir sistema"
+                       Foreground="White"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+          </Border>
+        </Button>
+        <Button x:Name="DismissButton"
+                Padding="0"
+                Background="Transparent"
+                BorderThickness="0"
+                MinWidth="84">
+          <Border Background="#334155"
+                  BorderBrush="#94A3B8"
+                  BorderThickness="1"
+                  CornerRadius="14"
+                  Padding="11,8">
+            <TextBlock Text="Cerrar"
+                       Foreground="White"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+          </Border>
+        </Button>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

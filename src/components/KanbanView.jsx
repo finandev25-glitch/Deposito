@@ -99,6 +99,11 @@ const KanbanView = ({
   connectionStatus,
   showConnectionStatus = true,
   realtimeActivity,
+  workloadAlarmActive = false,
+  pendingWorkloadCount = 0,
+  workloadThreshold = 12,
+  onRequestReplacementHelp = () => {},
+  replacementRequestState = {},
   detailPresentationMode = "default",
 }) => {
   const { currentUser, users } = useContext(AuthContext);
@@ -130,6 +135,7 @@ const KanbanView = ({
 
   // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
+  const [selectedValidatorFilter, setSelectedValidatorFilter] = useState(null);
   const isCompactKanban = detailPresentationMode === "compact";
 
   const getUserInitials = useCallback((name) => {
@@ -503,8 +509,48 @@ const KanbanView = ({
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "es"));
   }, [filteredDeposits, users]);
 
+  const handleValidatorFilterToggle = useCallback((user) => {
+    if (!user) return;
+
+    setSelectedValidatorFilter((current) => {
+      if (current?.key === user.key) {
+        return null;
+      }
+
+      return {
+        key: user.key,
+        name: user.name,
+      };
+    });
+  }, []);
+
+  const clearValidatorFilter = useCallback(() => {
+    setSelectedValidatorFilter(null);
+  }, []);
+
+  const visibleDeposits = useMemo(() => {
+    if (!selectedValidatorFilter) {
+      return filteredDeposits;
+    }
+
+    const selectedKey = String(selectedValidatorFilter.key || "").toLowerCase();
+
+    return filteredDeposits.filter((deposit) => {
+      const validatorId = deposit?.validado_por ?? deposit?.validado_por_usuario?.id ?? null;
+      const validatorName = String(
+        deposit?.validado_por_usuario?.nombre ||
+          deposit?.validado_por_nombre ||
+          deposit?.validado_por ||
+          "",
+      ).trim();
+
+      const depositKey = String(validatorId || validatorName.toLowerCase()).toLowerCase();
+      return depositKey === selectedKey;
+    });
+  }, [filteredDeposits, selectedValidatorFilter]);
+
   const groupedDeposits = useMemo(() => {
-    const grouped = filteredDeposits.reduce((acc, deposit) => {
+    const grouped = visibleDeposits.reduce((acc, deposit) => {
       if (!acc[deposit.estado]) {
         acc[deposit.estado] = [];
       }
@@ -529,7 +575,7 @@ const KanbanView = ({
     });
 
     return grouped;
-  }, [filteredDeposits]);
+  }, [visibleDeposits]);
 
   // Separar depósitos en validación en normales y antiguos
   const validacionSeparated = useMemo(() => {
@@ -680,24 +726,61 @@ const KanbanView = ({
           {attendedUsersSummary.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               {attendedUsersSummary.map((user) => (
-                <div
+                <button
                   key={user.key}
-                  className="flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-2 py-1 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-gray-900/90"
+                  type="button"
+                  onClick={() => handleValidatorFilterToggle(user)}
+                  aria-pressed={selectedValidatorFilter?.key === user.key}
+                  className={`flex items-center gap-2 rounded-full border px-2 py-1 shadow-sm backdrop-blur transition-all ${
+                    selectedValidatorFilter?.key === user.key
+                      ? "alarm-flash border-red-600 bg-red-100 text-slate-900 shadow-lg shadow-red-500/30 dark:border-red-500 dark:bg-red-200 dark:text-slate-900"
+                      : "border-slate-200 bg-white/90 hover:border-red-300 hover:bg-red-50 dark:border-slate-700 dark:bg-gray-900/90 dark:hover:border-red-700 dark:hover:bg-red-950/20"
+                  }`}
                   title={`${user.name}: ${user.count} depósito${user.count === 1 ? "" : "s"} atendido${user.count === 1 ? "" : "s"}`}
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-slate-800 to-slate-600 text-[11px] font-bold text-white dark:from-slate-100 dark:to-slate-300 dark:text-slate-900">
+                  <div
+                    className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br ${
+                      selectedValidatorFilter?.key === user.key
+                        ? "from-red-200 to-red-100 text-slate-900"
+                        : "from-slate-800 to-slate-600 text-white dark:from-slate-100 dark:to-slate-300 dark:text-slate-900"
+                    } text-[11px] font-bold`}
+                  >
                     {getUserInitials(user.name)}
                   </div>
                   <div className="pr-1">
-                    <div className="max-w-[10rem] truncate text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    <div
+                      className={`max-w-[10rem] truncate text-xs font-semibold ${
+                        selectedValidatorFilter?.key === user.key
+                          ? "text-slate-900"
+                          : "text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
                       {user.name}
                     </div>
-                    <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                    <div
+                      className={`text-[10px] font-medium uppercase tracking-[0.14em] ${
+                        selectedValidatorFilter?.key === user.key
+                          ? "text-slate-800"
+                          : "text-slate-500 dark:text-slate-400"
+                      }`}
+                    >
                       {user.count} atendido{user.count === 1 ? "" : "s"}
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
+              {selectedValidatorFilter && (
+                <button
+                  type="button"
+                  onClick={clearValidatorFilter}
+                  className="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700 shadow-sm transition-colors hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/50"
+                >
+                  <span>Filtro: {selectedValidatorFilter.name}</span>
+                  <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                    Limpiar
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>

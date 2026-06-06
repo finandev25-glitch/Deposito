@@ -1,5 +1,5 @@
 import React from "react";
-import { Bell, Menu, RefreshCw, ShieldCheck } from "lucide-react";
+import { Bell, Menu, RefreshCw, ShieldCheck, UserMinus } from "lucide-react";
 import ConnectionIndicator from "./ConnectionIndicator";
 import DailyAttendanceSummary from "./DailyAttendanceSummary";
 
@@ -10,7 +10,29 @@ const MobileHeader = ({
   realtimeActivity = null,
   selectedDate = null,
   attendanceSummary = [],
+  workloadAlarmActive = false,
+  pendingWorkloadCount = 0,
+  workloadThreshold = 12,
+  onRequestReplacementHelp = () => {},
+  replacementRequestState = {},
 }) => {
+  const handleRequestReplacement = async () => {
+    const reason = window.prompt(
+      "Indica el motivo de la ausencia o el tipo de apoyo que necesitas:",
+      "Necesito Apoyo!!"
+    );
+
+    if (reason === null) {
+      return;
+    }
+
+    try {
+      await onRequestReplacementHelp({ reason });
+    } catch (error) {
+      window.alert(error.message || "No se pudo solicitar apoyo.");
+    }
+  };
+
   return (
     <header
       className={`lg:hidden bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-3 flex-shrink-0 ${
@@ -57,6 +79,17 @@ const MobileHeader = ({
             </span>
           </div>
         )}
+        <button
+          onClick={handleRequestReplacement}
+          disabled={replacementRequestState?.isSending}
+          className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/50"
+          title="Pedir apoyo"
+        >
+          <UserMinus size={14} />
+          <span className="hidden sm:inline">
+            {replacementRequestState?.isSending ? "Enviando..." : "Necesito Apoyo!!"}
+          </span>
+        </button>
         <button
           onClick={() => window.location.reload()}
           className="inline-flex items-center justify-center rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"

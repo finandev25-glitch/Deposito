@@ -3235,6 +3235,294 @@ function registerJsonRoutes(app) {
     }
   });
 
+  app.get("/api/support-requests", async (req, res) => {
+    try {
+      const client = getSupabaseAdminClient();
+      if (!client) {
+        return res.status(503).json({ error: "Supabase no esta configurado en el backend" });
+      }
+
+      const status = String(req.query.status || "").trim();
+      const limit = Math.min(Number(req.query.limit || 50), 200);
+
+      let query = client
+        .from("support_requests")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (status) {
+        query = query.eq("status", status);
+      }
+
+      const { data, error } = await runLoggedQuery(
+        "support_requests.list",
+        { status, limit },
+        () => query
+      );
+
+      if (error) throw error;
+      res.json({ data: data || [] });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/support-requests/analytics", async (req, res) => {
+    try {
+      const client = getSupabaseAdminClient();
+      if (!client) {
+        return res.status(503).json({ error: "Supabase no esta configurado en el backend" });
+      }
+
+      const status = String(req.query.status || "pendiente").trim() || "pendiente";
+      const daysRaw = Number(req.query.days || 30);
+      const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), 180) : 30;
+      const timeZone = "America/Lima";
+
+      const untilDate = new Date();
+      const sinceDate = new Date(untilDate.getTime() - days * 24 * 60 * 60 * 1000);
+      const sinceIso = sinceDate.toISOString();
+      const untilIso = untilDate.toISOString();
+
+      const rows = [];
+      const batchSize = 500;
+      let offset = 0;
+
+      while (true) {
+        let query = client
+          .from("support_requests")
+          .select("id, created_at, status, pending_count, source, requested_by_name, requested_by_role")
+          .gte("created_at", sinceIso)
+          .lte("created_at", untilIso)
+          .order("created_at", { ascending: false })
+          .range(offset, offset + batchSize - 1);
+
+        if (status) {
+          query = query.eq("status", status);
+        }
+
+        const pageResult = await runLoggedQuery(
+          "support_requests.analytics.page",
+          { status, days, offset, batchSize },
+          () => query
+        );
+
+        if (pageResult.error) throw pageResult.error;
+
+        const pageRows = Array.isArray(pageResult.data) ? pageResult.data : [];
+        rows.push(...pageRows);
+
+        if (pageRows.length < batchSize) {
+          break;
+        }
+
+        offset += batchSize;
+      }
+
+      const hourBuckets = Array.from({ length: 24 }, (_, hour) => ({
+        hour,
+        label: `${String(hour).padStart(2, "0")}:00`,
+        count: 0,
+        suggested_support: 0,
+      }));
+
+      const hourFormatter = new Intl.DateTimeFormat("es-PE", {
+        timeZone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+      const getLocalHour = (dateValue) => {
+        const date = new Date(dateValue);
+        if (Number.isNaN(date.getTime())) {
+          return null;
+        }
+
+        const parts = hourFormatter.formatToParts(date);
+        const hourPart = parts.find((part) => part.type === "hour");
+        const hour = Number(hourPart?.value);
+        return Number.isFinite(hour) ? hour : null;
+      };
+
+      rows.forEach((row) => {
+        const hour = getLocalHour(row.created_at);
+        if (hour === null || hour < 0 || hour > 23) {
+          return;
+        }
+
+        hourBuckets[hour].count += 1;
+      });
+
+      hourBuckets.forEach((bucket) => {
+        bucket.suggested_support = bucket.count > 0 ? Math.max(1, Math.ceil(bucket.count / 3)) : 0;
+      });
+
+      const orderedByPeak = [...hourBuckets]
+        .filter((bucket) => bucket.count > 0)
+        .sort((a, b) => b.count - a.count || a.hour - b.hour)
+        .map((bucket, index) => ({
+          ...bucket,
+          rank: index + 1,
+          percentage: rows.length ? Number(((bucket.count / rows.length) * 100).toFixed(1)) : 0,
+        }));
+
+      const peakHour = orderedByPeak[0] || null;
+      const peakWindows = orderedByPeak.slice(0, 5);
+      const totalRequests = rows.length;
+      const averagePerHour = Number((totalRequests / 24).toFixed(2));
+      const activeHours = hourBuckets.filter((bucket) => bucket.count > 0).length;
+      const criticalHours = hourBuckets.filter((bucket) => bucket.count >= 3).length;
+
+      res.json({
+        data: {
+          period: {
+            status,
+            days,
+            since: sinceIso,
+            until: untilIso,
+            timeZone,
+          },
+          summary: {
+            totalRequests,
+            averagePerHour,
+            activeHours,
+            criticalHours,
+            peakHour,
+            suggestedSupportForPeak: peakHour ? peakHour.suggested_support : 0,
+          },
+          hourlySeries: hourBuckets,
+          peakWindows,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/support-requests", async (req, res) => {
+    try {
+      const client = getSupabaseAdminClient();
+      if (!client) {
+        return res.status(503).json({ error: "Supabase no esta configurado en el backend" });
+      }
+
+      const body = req.body || {};
+      console.log("[support-requests] POST /api/support-requests", {
+        bodyKeys: Object.keys(body || {}),
+        requested_by_name: body.requested_by_name || body.user_name || body.userName || null,
+        source: body.source || "web",
+      });
+      const requestedById = String(body.requested_by_id || body.user_id || body.userId || "").trim();
+      const requestedByName = String(body.requested_by_name || body.user_name || body.userName || "").trim();
+      const reason = String(body.reason || body.motivo || "").trim();
+      const pendingCount = Number(body.pending_count || body.pendingCount || 0);
+
+      if (!requestedByName) {
+        return res.status(400).json({ error: "requested_by_name es requerido" });
+      }
+
+      if (!reason) {
+        return res.status(400).json({ error: "reason es requerido" });
+      }
+
+      const payload = {
+        requested_by_id: requestedById || null,
+        requested_by_name: requestedByName,
+        requested_by_role: String(body.requested_by_role || body.user_role || body.userRole || "").trim() || null,
+        reason,
+        pending_count: Number.isFinite(pendingCount) ? pendingCount : 0,
+        status: String(body.status || "pendiente").trim() || "pendiente",
+        source: String(body.source || "web").trim() || "web",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await runLoggedQuery(
+        "support_requests.create",
+        { requestedById, requestedByName, pendingCount, status: payload.status },
+        () => client.from("support_requests").insert(payload).select("*").single()
+      );
+
+      if (error) throw error;
+
+      broadcastSupportRequestChange("INSERT", data, null, { source: "api/support-requests" });
+
+      res.status(201).json({ data });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/support-requests/:id", async (req, res) => {
+    try {
+      const client = getSupabaseAdminClient();
+      if (!client) {
+        return res.status(503).json({ error: "Supabase no esta configurado en el backend" });
+      }
+
+      const requestId = String(req.params.id || "").trim();
+      const body = req.body || {};
+      console.log("[support-requests] PATCH /api/support-requests/:id", {
+        requestId,
+        bodyKeys: Object.keys(body || {}),
+      });
+      const status = String(body.status || "").trim().toLowerCase();
+      const acknowledgedBy = String(body.acknowledged_by || body.acknowledgedBy || "").trim();
+      const resolvedAtRaw = body.resolved_at || body.resolvedAt || "";
+      const notes = String(body.notes || "").trim();
+      const hasBodyContent = body && typeof body === "object" && Object.keys(body).length > 0;
+      const nowIso = new Date().toISOString();
+      let resolvedAt = nowIso;
+
+      if (!requestId) {
+        return res.status(400).json({ error: "id es requerido" });
+      }
+
+      if (!hasBodyContent) {
+        return res.status(400).json({ error: "body incompleto" });
+      }
+
+      if (!["atendido", "vencido"].includes(status)) {
+        return res.status(400).json({ error: "status invalido" });
+      }
+
+      if (resolvedAtRaw) {
+        const parsedResolvedAt = new Date(resolvedAtRaw);
+        if (Number.isNaN(parsedResolvedAt.getTime())) {
+          return res.status(400).json({ error: "resolved_at invalido" });
+        }
+
+        resolvedAt = parsedResolvedAt.toISOString();
+      }
+
+      if (status === "atendido" && !acknowledgedBy) {
+        return res.status(400).json({ error: "acknowledged_by es requerido" });
+      }
+
+      const result =
+        status === "atendido"
+          ? await updateSupportRequestAsAcknowledged(client, requestId, acknowledgedBy, {
+              resolvedAt,
+              notes: notes || "Reconocido desde la app de bandeja",
+            })
+          : await updateSupportRequestAsExpired(client, requestId, {
+              resolvedAt,
+              notes: notes || "Vencido por expiración en la app de bandeja",
+            });
+      if (result.statusCode === 404) {
+        return res.status(404).json({ error: result.error });
+      }
+
+      broadcastSupportRequestChange("UPDATE", result.data, null, { source: "api/support-requests/:id" });
+
+      res.status(200).json({ data: result.data });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/personal/search", async (req, res) => {
     try {
       const client = getSupabaseAdminClient();
@@ -4838,7 +5126,11 @@ function registerJsonRoutes(app) {
 }
 
 function broadcast(event) {
-  const payload = `event: deposit-change\ndata: ${JSON.stringify(event)}\n\n`;
+  broadcastSseEvent("deposit-change", event);
+}
+
+function broadcastSseEvent(eventName, event) {
+  const payload = `event: ${eventName}\ndata: ${JSON.stringify(event)}\n\n`;
   for (const client of clients) {
     client.write(payload);
   }
@@ -4860,7 +5152,93 @@ function broadcastDepositChange(eventType, row, oldRow = null, meta = {}) {
     clients: clients.size,
   });
 
-  broadcast(event);
+  broadcastSseEvent("deposit-change", event);
+}
+
+function broadcastSupportRequestChange(eventType, row, oldRow = null, meta = {}) {
+  const event = {
+    type: "support-request",
+    eventType,
+    new: row || null,
+    old: oldRow || null,
+    meta,
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log("[SSE] support-request", {
+    eventType,
+    id: row?.id || oldRow?.id || null,
+    clients: clients.size,
+  });
+
+  broadcastSseEvent("support-request", event);
+}
+
+async function updateSupportRequestAsAcknowledged(client, requestId, acknowledgedBy, options = {}) {
+  const nowIso = new Date().toISOString();
+  const resolvedAt = options.resolvedAt || nowIso;
+  const updates = {
+    status: "atendido",
+    acknowledged_by: acknowledgedBy,
+    acknowledged_at: nowIso,
+    resolved_by: acknowledgedBy,
+    resolved_at: resolvedAt,
+    notes: options.notes || "Reconocido desde la app de bandeja",
+    updated_at: nowIso,
+  };
+
+  const existingRecordResult = await runLoggedQuery(
+    "support_requests.findById",
+    { requestId },
+    () => client.from("support_requests").select("id").eq("id", requestId).maybeSingle()
+  );
+
+  if (existingRecordResult.error) throw existingRecordResult.error;
+  if (!existingRecordResult.data) {
+    return { statusCode: 404, error: "support_request no encontrada" };
+  }
+
+  const { data, error } = await runLoggedQuery(
+    "support_requests.update",
+    { requestId, updates },
+    () => client.from("support_requests").update(updates).eq("id", requestId).select("*").single()
+  );
+
+  if (error) throw error;
+
+  return { statusCode: 200, data };
+}
+
+async function updateSupportRequestAsExpired(client, requestId, options = {}) {
+  const nowIso = new Date().toISOString();
+  const resolvedAt = options.resolvedAt || nowIso;
+  const updates = {
+    status: "vencido",
+    resolved_at: resolvedAt,
+    notes: options.notes || "Vencido por expiración en la app de bandeja",
+    updated_at: nowIso,
+  };
+
+  const existingRecordResult = await runLoggedQuery(
+    "support_requests.findById",
+    { requestId },
+    () => client.from("support_requests").select("id").eq("id", requestId).maybeSingle()
+  );
+
+  if (existingRecordResult.error) throw existingRecordResult.error;
+  if (!existingRecordResult.data) {
+    return { statusCode: 404, error: "support_request no encontrada" };
+  }
+
+  const { data, error } = await runLoggedQuery(
+    "support_requests.update",
+    { requestId, updates },
+    () => client.from("support_requests").update(updates).eq("id", requestId).select("*").single()
+  );
+
+  if (error) throw error;
+
+  return { statusCode: 200, data };
 }
 
 function summarizeRealtimeError(error) {
@@ -4934,6 +5312,18 @@ function handleRealtimeWorkerMessage(message) {
       old: message.old,
       timestamp: message.timestamp || new Date().toISOString(),
     });
+    return;
+  }
+
+  if (message.type === "support-request-change") {
+    broadcastSupportRequestChange(
+      message.eventType,
+      message.new || null,
+      message.old || null,
+      {
+        source: message.source || "realtime-worker",
+      }
+    );
   }
 }
 
@@ -4992,7 +5382,7 @@ export function startDepositRealtimeHub() {
 }
 
 export function registerDepositSseRoute(app) {
-  app.get("/api/events/depositos", (req, res) => {
+  const handleSseConnection = (req, res) => {
     const allowedOrigin = getAllowedOrigin(req);
 
     res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
@@ -5029,9 +5419,22 @@ export function registerDepositSseRoute(app) {
         realtimeStatus,
       });
     });
-  });
+  };
+
+  app.get("/api/events/depositos", handleSseConnection);
+  app.get("/api/events/support-requests", handleSseConnection);
 
   app.options("/api/events/depositos", (req, res) => {
+    const allowedOrigin = getAllowedOrigin(req);
+
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Cache-Control");
+    res.setHeader("Vary", "Origin");
+    res.sendStatus(204);
+  });
+
+  app.options("/api/events/support-requests", (req, res) => {
     const allowedOrigin = getAllowedOrigin(req);
 
     res.setHeader("Access-Control-Allow-Origin", allowedOrigin);

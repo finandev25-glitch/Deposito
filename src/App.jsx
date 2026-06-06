@@ -11,6 +11,7 @@ import GestionBancosView from "./components/GestionBancosView";
 import GestionEmpresasView from "./components/GestionEmpresasView";
 import UsuariosView from "./components/UsuariosView";
 import ReportesView from "./components/ReportesView";
+import ConfirmadosPorHoraView from "./components/ConfirmadosPorHoraView";
 import DocumentosView from "./components/DocumentosView";
 import ExportarVouchersView from "./components/ExportarVouchersView";
 import ConfiguracionYCloud from "./components/ConfiguracionYCloud";
@@ -40,6 +41,10 @@ function App({ uiMode = "default" }) {
     realtimeErrors,
     realtimeActivity,
     isSupabaseConnected,
+    workloadAlarmActive,
+    workloadThreshold,
+    pendingWorkloadCount,
+    replacementRequestState,
     voucherPanelState,
     currentSelectedDate,
     refreshDeposits,
@@ -69,6 +74,7 @@ function App({ uiMode = "default" }) {
     fetchBancosData,
     fetchEmpresasData,
     fetchCuentasData,
+    requestReplacementHelp,
   } = useDepositDashboard();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(isExtensionMode);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -210,15 +216,20 @@ function App({ uiMode = "default" }) {
           : "bg-gray-50 dark:bg-gray-950"
       }`}
     >
-      <Sidebar
-        isSidebarCollapsed={isSidebarCollapsed}
-        setIsSidebarCollapsed={setIsSidebarCollapsed}
-        isMobileMenuOpen={isMobileMenuOpen}
-        setIsMobileMenuOpen={setIsMobileMenuOpen}
-        compactMode={isExtensionMode}
-        selectedDate={currentSelectedDate}
-        attendanceSummary={attendanceSummary}
-      />
+        <Sidebar
+          isSidebarCollapsed={isSidebarCollapsed}
+          setIsSidebarCollapsed={setIsSidebarCollapsed}
+          isMobileMenuOpen={isMobileMenuOpen}
+          setIsMobileMenuOpen={setIsMobileMenuOpen}
+          compactMode={isExtensionMode}
+          selectedDate={currentSelectedDate}
+          attendanceSummary={attendanceSummary}
+          workloadAlarmActive={workloadAlarmActive}
+          pendingWorkloadCount={pendingWorkloadCount}
+          workloadThreshold={workloadThreshold}
+          onRequestReplacementHelp={requestReplacementHelp}
+          replacementRequestState={replacementRequestState}
+        />
       <div
         className={`flex min-w-0 flex-1 flex-col ${
           isExtensionMode
@@ -237,6 +248,11 @@ function App({ uiMode = "default" }) {
           realtimeActivity={realtimeActivity}
           selectedDate={currentSelectedDate}
           attendanceSummary={attendanceSummary}
+          workloadAlarmActive={workloadAlarmActive}
+          pendingWorkloadCount={pendingWorkloadCount}
+          workloadThreshold={workloadThreshold}
+          onRequestReplacementHelp={requestReplacementHelp}
+          replacementRequestState={replacementRequestState}
         />
         <main className="flex-1 overflow-y-auto">
           <Routes>
@@ -263,6 +279,11 @@ function App({ uiMode = "default" }) {
                   }}
                   showConnectionStatus={!isExtensionMode}
                   realtimeActivity={realtimeActivity}
+                  workloadAlarmActive={workloadAlarmActive}
+                  pendingWorkloadCount={pendingWorkloadCount}
+                  workloadThreshold={workloadThreshold}
+                  onRequestReplacementHelp={requestReplacementHelp}
+                  replacementRequestState={replacementRequestState}
                   detailPresentationMode={detailPresentationMode}
                 />
               }
@@ -367,6 +388,8 @@ function App({ uiMode = "default" }) {
               }
             />
             <Route path="/reportes" element={<ReportesView />} />
+            <Route path="/confirmados" element={<ConfirmadosPorHoraView />} />
+            <Route path="/apoyo" element={<Navigate to="/confirmados" replace />} />
             <Route
               path="/documentos"
               element={<DocumentosView />}

@@ -56,6 +56,19 @@ const channel = client
         timestamp: new Date().toISOString(),
       });
     }
+  )
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "support_requests" },
+    (payload) => {
+      sendMessage({
+        type: "support-request-change",
+        eventType: payload.eventType,
+        new: payload.new,
+        old: payload.old,
+        timestamp: new Date().toISOString(),
+      });
+    }
   );
 
 let restartTimer = null;

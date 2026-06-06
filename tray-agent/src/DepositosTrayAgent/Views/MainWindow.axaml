@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DepositosTrayAgent.Views.MainWindow"
+        Width="760"
+        Height="540"
+        Background="#111827"
+        Foreground="White"
+        Title="Depositos Tray Agent"
+        CanResize="False"
+        SystemDecorations="Full"
+        WindowStartupLocation="CenterScreen">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" ColumnDefinitions="*">
+    <Border Background="#B91C1C" Padding="20">
+      <StackPanel Spacing="4">
+        <TextBlock Text="Agente de bandeja" FontSize="24" FontWeight="Bold" />
+        <TextBlock Text="Recibe solicitudes de apoyo aunque Chrome no esté abierto." Opacity="0.85" />
+      </StackPanel>
+    </Border>
+
+    <StackPanel Grid.Row="1" Margin="20,18,20,0" Spacing="8">
+      <TextBlock Text="Backend" FontWeight="SemiBold" />
+      <TextBox x:Name="BackendUrlBox" Watermark="http://192.168.85.50:3000" />
+      <TextBlock Text="Dashboard" FontWeight="SemiBold" Margin="0,8,0,0" />
+      <TextBox x:Name="DashboardUrlBox" Watermark="http://192.168.85.50:3000/kanban" />
+      <TextBlock Text="Nombre del agente" FontWeight="SemiBold" Margin="0,8,0,0" />
+      <TextBox x:Name="AgentNameBox" Watermark="Nombre que verá el backend" />
+      <TextBlock Text="Grupo" FontWeight="SemiBold" Margin="0,8,0,0" />
+      <TextBox x:Name="AgentGroupBox" Watermark="general" />
+      <TextBlock Text="Alias de equipo" FontWeight="SemiBold" Margin="0,8,0,0" />
+      <TextBox x:Name="MachineAliasBox" Watermark="Opcional" />
+    </StackPanel>
+
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="20,18,20,0" Spacing="10">
+      <Button x:Name="SaveButton" Content="Guardar" Width="120" />
+      <Button x:Name="TestButton" Content="Probar alerta" Width="140" />
+      <Button x:Name="OpenDashboardButton" Content="Abrir sistema" Width="140" />
+    </StackPanel>
+
+    <Border Grid.Row="3" Margin="20,18,20,0" Padding="16" Background="#1F2937" CornerRadius="12">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Estado" FontWeight="SemiBold" />
+        <TextBlock x:Name="StatusTextBlock" Text="Iniciando..." />
+        <TextBlock x:Name="HintTextBlock" Text="La ventana puede quedarse cerrada: el agente seguirá corriendo en la bandeja." Opacity="0.75" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <Border Grid.Row="4" Margin="20,18,20,0" Padding="16" Background="#0F172A" CornerRadius="12">
+      <StackPanel Spacing="6">
+        <TextBlock Text="Uso recomendado" FontWeight="SemiBold" />
+        <TextBlock Text="1. Instala el agente en cada PC." />
+        <TextBlock Text="2. Configura el backend una sola vez." />
+        <TextBlock Text="3. Mantén la app corriendo en segundo plano." />
+      </StackPanel>
+    </Border>
+
+    <Border Grid.Row="6" Margin="20" Padding="12" Background="#111827">
+      <TextBlock x:Name="FooterTextBlock" Text="Listo para escuchar solicitudes de apoyo." Opacity="0.8" />
+    </Border>
+  </Grid>
+</Window>

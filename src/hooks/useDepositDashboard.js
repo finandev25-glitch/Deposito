@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { useRealtimeDeposits } from "./useRealtimeDeposits.js";
 import { toLocalISOString } from "../utils/dateFormatters";
@@ -6,6 +6,8 @@ import { DEPOSIT_FULL_QUERY } from "../constants/depositQuery";
 import { buildApiUrl } from "../services/apiBase.js";
 
 const API_BASE = "/api";
+const WORKLOAD_ALERT_THRESHOLD = 3;
+const WORKLOAD_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
 async function apiJson(path, options = {}) {
   const response = await fetch(buildApiUrl(`${API_BASE}${path}`), {
@@ -45,6 +47,12 @@ export function useDepositDashboard() {
   const [appDataLoading, setAppDataLoading] = useState(true);
   const [appDataError, setAppDataError] = useState(null);
   const [realtimeActivity, setRealtimeActivity] = useState(null);
+  const [workloadAlarmActive, setWorkloadAlarmActive] = useState(false);
+  const [replacementRequestState, setReplacementRequestState] = useState({
+    isSending: false,
+    lastRequestedAt: null,
+    lastResult: null,
+  });
   const [voucherPanelState, setVoucherPanelState] = useState({
     isOpen: false,
     voucherUrl: "",
@@ -55,6 +63,12 @@ export function useDepositDashboard() {
   const currentSelectedDateRef = useRef(currentSelectedDate);
   const depositsRef = useRef([]);
   const notificationPermissionPromiseRef = useRef(null);
+  const workloadAlarmRef = useRef({
+    lastTriggeredAt: 0,
+    lastCount: 0,
+    lastAutoRequestedAt: 0,
+    lastAutoRequestedCount: 0,
+  });
   const lastQueryRef = useRef({ type: null, value: null });
   const refreshDepositsRef = useRef(null);
   const isSupabaseConnected = !!currentUser;
@@ -70,6 +84,11 @@ export function useDepositDashboard() {
   useEffect(() => {
     depositsRef.current = deposits;
   }, [deposits]);
+
+  const pendingWorkloadCount = useMemo(
+    () => deposits.filter((deposit) => deposit?.estado === "pendiente").length,
+    [deposits]
+  );
 
   const formatPendingDepositAmount = useCallback((value, currency = "PEN") => {
     const numericValue = Number(value);
@@ -186,6 +205,227 @@ export function useDepositDashboard() {
     return notificationPermissionPromiseRef.current;
   }, []);
 
+  const playAlarmTone = useCallback(async () => {
+    if (typeof window === "undefined") return false;
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return false;
+
+    try {
+      const audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.type = "sawtooth";
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 0.25);
+
+      gainNode.gain.setValueAtTime(0.14, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.28);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.3);
+      oscillator.onended = () => {
+        audioContext.close().catch(() => {});
+      };
+
+      return true;
+    } catch (error) {
+      console.warn("No se pudo reproducir el tono de alarma:", error.message);
+      return false;
+    }
+  }, []);
+
+  const vibrateAlarm = useCallback(() => {
+    if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") {
+      return false;
+    }
+
+    navigator.vibrate([220, 80, 220, 80, 320]);
+    return true;
+  }, []);
+
+  const showNativeAlert = useCallback(
+    async ({ title, body, tag, requireInteraction = true, requestPermission = false }) => {
+      const permission = requestPermission
+        ? await ensureNotificationPermission()
+        : typeof Notification !== "undefined"
+        ? Notification.permission
+        : "default";
+      if (permission !== "granted") {
+        return false;
+      }
+
+      try {
+        const notification = new Notification(title, {
+          body,
+          tag,
+          renotify: true,
+          requireInteraction,
+          silent: false,
+          icon: getNotificationIconUrl(),
+          badge: getNotificationIconUrl(),
+          dir: "ltr",
+          lang: "es-PE",
+        });
+
+        notification.onclick = () => {
+          window.focus?.();
+          notification.close();
+        };
+
+        if (requireInteraction) {
+          setTimeout(() => {
+            notification.close();
+          }, 18000);
+        }
+
+        return true;
+      } catch (error) {
+        console.warn("No se pudo mostrar la alerta nativa:", error.message);
+        return false;
+      }
+    },
+    [ensureNotificationPermission, getNotificationIconUrl]
+  );
+
+  const createSupportRequestOnBackend = useCallback(
+    async ({ reason = "", source = "web" } = {}) => {
+      const user = currentUserRef.current;
+      const userName = user?.nombre || "Usuario";
+      const userRole = user?.user_rol || "N/A";
+      const pendingCount = pendingWorkloadCount;
+      const finalReason = reason.trim() || "Necesita apoyo temporal por ausencia.";
+
+      console.log("[support-requests] creating", {
+        source,
+        pendingCount,
+        requestedBy: userName,
+        requestedByRole: userRole,
+        reason: finalReason,
+      });
+
+      const response = await apiJson("/support-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          requested_by_id: user?.id || null,
+          requested_by_name: userName,
+          requested_by_role: userRole,
+          reason: finalReason,
+          pending_count: pendingCount,
+          status: "pendiente",
+          source,
+        }),
+      });
+
+      return {
+        sent: true,
+        data: response?.data || null,
+        message: finalReason,
+      };
+    },
+    [pendingWorkloadCount]
+  );
+
+  const triggerWorkloadAlarm = useCallback(
+    async (reason = "") => {
+      const pendingCount = pendingWorkloadCount;
+
+      if (pendingCount < WORKLOAD_ALERT_THRESHOLD) {
+        setWorkloadAlarmActive(false);
+        return false;
+      }
+
+      const now = Date.now();
+      const isWithinCooldown = now - workloadAlarmRef.current.lastTriggeredAt < WORKLOAD_ALERT_COOLDOWN_MS;
+      const sameCount = workloadAlarmRef.current.lastCount === pendingCount;
+
+      setWorkloadAlarmActive(true);
+
+      if (isWithinCooldown && sameCount) {
+        return false;
+      }
+
+      workloadAlarmRef.current = {
+        lastTriggeredAt: now,
+        lastCount: pendingCount,
+        lastAutoRequestedAt: workloadAlarmRef.current.lastAutoRequestedAt,
+        lastAutoRequestedCount: workloadAlarmRef.current.lastAutoRequestedCount,
+      };
+
+      await Promise.allSettled([playAlarmTone()]);
+      vibrateAlarm();
+
+      const shouldRequestSupport =
+        workloadAlarmRef.current.lastAutoRequestedCount !== pendingCount ||
+        now - workloadAlarmRef.current.lastAutoRequestedAt >= WORKLOAD_ALERT_COOLDOWN_MS;
+
+      if (shouldRequestSupport) {
+        try {
+          await createSupportRequestOnBackend({
+            reason:
+              reason.trim() ||
+              `Alerta automatica: hay ${pendingCount} depositos pendientes y se necesita apoyo.`,
+            source: "workload-auto",
+          });
+          workloadAlarmRef.current.lastAutoRequestedAt = now;
+          workloadAlarmRef.current.lastAutoRequestedCount = pendingCount;
+        } catch (error) {
+          console.warn("No se pudo crear la solicitud automatica de apoyo:", error);
+        }
+      }
+
+      return true;
+    },
+    [createSupportRequestOnBackend, pendingWorkloadCount, playAlarmTone, vibrateAlarm]
+  );
+
+  const requestReplacementHelp = useCallback(
+    async ({ reason = "" } = {}) => {
+      console.log("[support-requests] manual help clicked", { reason });
+      setReplacementRequestState((prev) => ({
+        ...prev,
+        isSending: true,
+      }));
+
+      try {
+        await Promise.allSettled([playAlarmTone()]);
+        vibrateAlarm();
+
+        const supportRequest = await createSupportRequestOnBackend({
+          reason,
+          source: "manual",
+        });
+
+        setReplacementRequestState({
+          isSending: false,
+          lastRequestedAt: Date.now(),
+          lastResult: supportRequest.data,
+        });
+
+        return supportRequest;
+      } catch (error) {
+        setReplacementRequestState((prev) => ({
+          ...prev,
+          isSending: false,
+          lastResult: {
+            sent: false,
+            error: error.message,
+          },
+        }));
+        throw error;
+      }
+    },
+    [createSupportRequestOnBackend, playAlarmTone, vibrateAlarm]
+  );
+
   const showPendingDepositNotification = useCallback(
     async (deposit) => {
       if (!deposit || deposit.estado !== "pendiente") {
@@ -244,7 +484,7 @@ export function useDepositDashboard() {
 
         return true;
       } catch (error) {
-        console.warn("No se pudo mostrar la notificación nativa:", error.message);
+        console.warn("No se pudo mostrar la notificaciÃ³n nativa:", error.message);
         return false;
       }
     },
@@ -359,23 +599,23 @@ export function useDepositDashboard() {
 
   const refreshDeposits = useCallback(async () => {
     try {
-      console.log("🔄 Refrescando depósitos...");
+      console.log("ðŸ”„ Refrescando depÃ³sitos...");
       const lastQuery = lastQueryRef.current;
 
       if (lastQuery.type === "date" && lastQuery.value) {
-        console.log("📅 Refrescando depósitos para fecha específica:", lastQuery.value);
+        console.log("ðŸ“… Refrescando depÃ³sitos para fecha especÃ­fica:", lastQuery.value);
         return await fetchDepositsByDate(lastQuery.value);
       }
 
       if (lastQuery.type === "period" && lastQuery.value) {
-        console.log("📅 Refrescando depósitos para período:", lastQuery.value);
+        console.log("ðŸ“… Refrescando depÃ³sitos para perÃ­odo:", lastQuery.value);
         return await fetchDepositsByPeriod(lastQuery.value);
       }
 
-      console.log("📅 Refrescando todos los depósitos...");
+      console.log("ðŸ“… Refrescando todos los depÃ³sitos...");
       return await fetchAllDeposits();
     } catch (error) {
-      console.warn("⚠️ Error al refrescar depósitos:", error.message);
+      console.warn("âš ï¸ Error al refrescar depÃ³sitos:", error.message);
     }
   }, [fetchAllDeposits, fetchDepositsByDate, fetchDepositsByPeriod]);
 
@@ -390,7 +630,7 @@ export function useDepositDashboard() {
       depositId: null,
       at: Date.now(),
     });
-    console.log("🔄 REALTIME: Llamando refreshDeposits para INSERT...");
+    console.log("ðŸ”„ REALTIME: Llamando refreshDeposits para INSERT...");
     if (newRecord?.estado === "pendiente") {
       void showPendingDepositNotification(newRecord);
     }
@@ -416,7 +656,7 @@ export function useDepositDashboard() {
       at: Date.now(),
     });
     
-    console.log("🔄 REALTIME: Actualizando estado deposits para UPDATE...", {
+    console.log("ðŸ”„ REALTIME: Actualizando estado deposits para UPDATE...", {
       id: fullDeposit.id,
       estado: fullDeposit.estado,
     });
@@ -427,11 +667,11 @@ export function useDepositDashboard() {
         const updated = prev.map((dep) => 
           dep.id === fullDeposit.id ? mergeDepositRecord(dep, fullDeposit) : dep
         );
-        console.log("✅ REALTIME: Registro existente actualizado");
+        console.log("âœ… REALTIME: Registro existente actualizado");
         return updated;
       }
       
-      console.log("⚠️ REALTIME: Registro modificado no existía en el estado actual. Refrescando todo...");
+      console.log("âš ï¸ REALTIME: Registro modificado no existÃ­a en el estado actual. Refrescando todo...");
       setTimeout(() => refreshDeposits(), 0);
       return prev;
     });
@@ -447,9 +687,9 @@ export function useDepositDashboard() {
       at: Date.now(),
     });
 
-    console.log("🗑️ REALTIME: Eliminando depósito del estado:", deletedId);
+    console.log("ðŸ—‘ï¸ REALTIME: Eliminando depÃ³sito del estado:", deletedId);
     setDeposits((prev) => prev.filter((deposit) => deposit.id !== deletedId));
-    console.log("✅ REALTIME: Estado actualizado");
+    console.log("âœ… REALTIME: Estado actualizado");
   }, []);
 
   const handleSelectedDateChange = useCallback((fecha) => {
@@ -737,8 +977,8 @@ export function useDepositDashboard() {
   );
 
   // Polling de respaldo adaptativo:
-  // Si Realtime está activo y suscrito, el polling se espacia a 5 minutos para ahorrar recursos.
-  // Si está desconectado o en error, se activa un fallback de 60 segundos.
+  // Si Realtime estÃ¡ activo y suscrito, el polling se espacia a 5 minutos para ahorrar recursos.
+  // Si estÃ¡ desconectado o en error, se activa un fallback de 60 segundos.
   useEffect(() => {
     if (!currentUser || !isSupabaseConnected) {
       return;
@@ -747,13 +987,13 @@ export function useDepositDashboard() {
     const intervalDelay = realtimeStatus === "SUBSCRIBED" ? 5 * 60 * 1000 : 60000;
 
     console.log(
-      `⏱️ DASHBOARD: Iniciando polling de respaldo con intervalo de ${
+      `â±ï¸ DASHBOARD: Iniciando polling de respaldo con intervalo de ${
         intervalDelay / 1000
       }s (Realtime: ${realtimeStatus || "DESCONECTADO"})`
     );
 
     const refreshTimer = setInterval(() => {
-      console.log("⏱️ DASHBOARD: Ejecutando refresco periódico de respaldo...");
+      console.log("â±ï¸ DASHBOARD: Ejecutando refresco periÃ³dico de respaldo...");
       refreshDeposits();
     }, intervalDelay);
 
@@ -790,7 +1030,7 @@ export function useDepositDashboard() {
       try {
         await fetchData(false);
       } catch (error) {
-        console.error("❌ Error al cargar datos iniciales:", error);
+        console.error("âŒ Error al cargar datos iniciales:", error);
       } finally {
         setAppDataLoading(false);
       }
@@ -806,6 +1046,10 @@ export function useDepositDashboard() {
     }
   }, [currentUser, deposits.length]);
 
+  useEffect(() => {
+    void triggerWorkloadAlarm();
+  }, [pendingWorkloadCount, triggerWorkloadAlarm]);
+
   return {
     bancos,
     empresas,
@@ -818,6 +1062,10 @@ export function useDepositDashboard() {
     realtimeActivity,
     realtimeStatus,
     realtimeErrors,
+    workloadAlarmActive,
+    workloadThreshold: WORKLOAD_ALERT_THRESHOLD,
+    pendingWorkloadCount,
+    replacementRequestState,
     voucherPanelState,
     currentSelectedDate,
     depositsWithFullData,
@@ -852,7 +1100,10 @@ export function useDepositDashboard() {
     handleUpdatePersonal,
     handleUpdateDeposit,
     handleTakeDepositForValidation,
+    triggerWorkloadAlarm,
+    requestReplacementHelp,
   };
 }
 
 export default useDepositDashboard;
+

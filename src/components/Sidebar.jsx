@@ -10,6 +10,7 @@ import {
   CreditCard,
   Users,
   PieChart,
+  Clock3,
   FileText,
   ShieldCheck,
   LogOut,
@@ -22,12 +23,18 @@ import {
   Phone,
   KeyRound,
   FolderCheck,
+  UserMinus,
 } from "lucide-react";
 
 const SidebarContent = ({
   isCollapsed,
   setIsMobileMenuOpen,
   compactMode = false,
+  workloadAlarmActive = false,
+  pendingWorkloadCount = 0,
+  workloadThreshold = 12,
+  onRequestReplacementHelp = () => {},
+  replacementRequestState = {},
 }) => {
   const { currentUser, logout } = useContext(AuthContext);
   const { theme, toggleTheme } = useTheme();
@@ -55,6 +62,7 @@ const SidebarContent = ({
       adminOnly: true,
     },
     { view: "reportes", icon: PieChart, label: "Reportes" },
+    { view: "confirmados", icon: Clock3, label: "Confirmados" },
     { view: "documentos", icon: FileText, label: "Documentos" },
     { view: "regularizar-depositos", icon: FolderCheck, label: "Regularizar Depósitos" },
     { view: "cambiar-contrasena", icon: KeyRound, label: "Cambiar Contraseña" },
@@ -69,6 +77,23 @@ const SidebarContent = ({
     navigate(`/${view}`);
     if (setIsMobileMenuOpen) {
       setIsMobileMenuOpen(false);
+    }
+  };
+
+  const handleRequestReplacement = async () => {
+    const reason = window.prompt(
+      "Indica el motivo de la ausencia o el tipo de apoyo que necesitas:",
+      "Necesito Apoyo!!"
+    );
+
+    if (reason === null) {
+      return;
+    }
+
+    try {
+      await onRequestReplacementHelp({ reason });
+    } catch (error) {
+      window.alert(error.message || "No se pudo solicitar el reemplazo.");
     }
   };
 
@@ -144,6 +169,20 @@ const SidebarContent = ({
           isCollapsed ? "p-2" : "p-4"
         }`}
       >
+        <button
+          onClick={handleRequestReplacement}
+          disabled={replacementRequestState?.isSending}
+          className={`mb-3 w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/50 ${isCollapsed ? "justify-center" : ""}`}
+          title="Pedir apoyo"
+        >
+          <span className={`flex items-center ${isCollapsed ? "justify-center" : "gap-2"}`}>
+            <UserMinus size={14} />
+            {!isCollapsed && (
+              <span>{replacementRequestState?.isSending ? "Enviando..." : "Necesito Apoyo!!"}</span>
+            )}
+          </span>
+        </button>
+
         <div className={`p-2 ${isCollapsed ? "mb-2" : ""}`}>
           <button
             onClick={toggleTheme}
@@ -252,6 +291,11 @@ const Sidebar = ({
   isMobileMenuOpen,
   setIsMobileMenuOpen,
   compactMode = false,
+  workloadAlarmActive = false,
+  pendingWorkloadCount = 0,
+  workloadThreshold = 12,
+  onRequestReplacementHelp = () => {},
+  replacementRequestState = {},
 }) => {
   useEffect(() => {
     if (isMobileMenuOpen) {
@@ -275,6 +319,11 @@ const Sidebar = ({
         <SidebarContent
           isCollapsed={isSidebarCollapsed}
           compactMode={compactMode}
+          workloadAlarmActive={workloadAlarmActive}
+          pendingWorkloadCount={pendingWorkloadCount}
+          workloadThreshold={workloadThreshold}
+          onRequestReplacementHelp={onRequestReplacementHelp}
+          replacementRequestState={replacementRequestState}
         />
         <button
           onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -313,6 +362,11 @@ const Sidebar = ({
                 isCollapsed={false}
                 setIsMobileMenuOpen={setIsMobileMenuOpen}
                 compactMode={compactMode}
+                workloadAlarmActive={workloadAlarmActive}
+                pendingWorkloadCount={pendingWorkloadCount}
+                workloadThreshold={workloadThreshold}
+                onRequestReplacementHelp={onRequestReplacementHelp}
+                replacementRequestState={replacementRequestState}
               />
             </motion.div>
           </>
