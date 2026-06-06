@@ -446,8 +446,8 @@ export default function ConfirmadosPorHoraView() {
                         </div>
                       )}
 
-                  <div className="relative min-h-[700px]">
-                    <ResponsiveContainer width="100%" height={650}>
+                  <div className="relative min-h-[595px]">
+                    <ResponsiveContainer width="100%" height={552}>
                       <BarChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis

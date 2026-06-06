@@ -27,6 +27,12 @@ yarn-error.log*
 # Build
 build/
 dist/
+tray-agent/.vs/
+tray-agent/src/DepositosTrayAgent/bin/
+tray-agent/src/DepositosTrayAgent/obj/
+tray-agent/artifacts/
+.extfull-backup/
+extension-full - copia/
 
 # Temporal
 tmp/
