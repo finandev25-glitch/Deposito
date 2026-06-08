@@ -20,6 +20,7 @@ let envLoaded = false;
 let sqlServerPool = null;
 let sqlServerPoolSignature = null;
 const QUERY_LOGGING_ENABLED = process.env.LOG_QUERIES !== "false";
+const AUTOMATIC_SUPPORT_ALERT_ENABLED = false;
 const AUTOMATIC_SUPPORT_ALERT_THRESHOLD = 4;
 const AUTOMATIC_SUPPORT_ALERT_DEBOUNCE_MS = 5_000;
 const AUTOMATIC_SUPPORT_ALERT_SOURCE = "workload-auto";
@@ -972,7 +973,18 @@ function buildLimaDayRange(dateOnly) {
 
 function formatAutomaticSupportReason(pendingCount, dateOnly) {
   const safeCount = Number.isFinite(Number(pendingCount)) ? Number(pendingCount) : 0;
-  return `Hay ${safeCount} depositos x confirmar`;
+  const now = new Date();
+  const timeFormatter = new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = timeFormatter.formatToParts(now);
+  const hourPart = parts.find((part) => part.type === "hour")?.value || "00";
+  const minutePart = parts.find((part) => part.type === "minute")?.value || "00";
+  const timeLabel = `${hourPart}:${minutePart}`;
+  return `Hay ${safeCount} depositos x confirmar - ${timeLabel}`;
 }
 
 function isSupportRequestPendingToday(record, todayLima = getLimaDateOnly()) {
@@ -1017,6 +1029,10 @@ function shouldBroadcastSupportRequestEvent(eventType, nextRow, previousRow = nu
 }
 
 async function syncAutomaticSupportAlert() {
+  if (!AUTOMATIC_SUPPORT_ALERT_ENABLED) {
+    return null;
+  }
+
   if (automaticSupportAlertRunning) {
     return null;
   }
@@ -1059,86 +1075,8 @@ async function syncAutomaticSupportAlert() {
       };
     }
 
-    const dayRange = buildLimaDayRange(todayLima);
-    if (!dayRange) {
-      return null;
-    }
-
-    const existingResult = await runLoggedQuery(
-      "support_requests.automatic_alert.find_today",
-      { todayLima, source: AUTOMATIC_SUPPORT_ALERT_SOURCE },
-      () =>
-        client
-          .from("support_requests")
-          .select("id, pending_count, status, created_at, updated_at, requested_by_name, requested_by_id, source")
-          .eq("source", AUTOMATIC_SUPPORT_ALERT_SOURCE)
-          .gte("created_at", dayRange.sinceIso)
-          .lt("created_at", dayRange.untilIso)
-          .order("created_at", { ascending: false })
-          .limit(1)
-    );
-
-    if (existingResult?.error) {
-      throw existingResult.error;
-    }
-
-    const existingAlert = Array.isArray(existingResult?.data) ? existingResult.data[0] || null : null;
     const reason = formatAutomaticSupportReason(pendingCount, todayLima);
     const nowIso = new Date().toISOString();
-
-    if (existingAlert?.id) {
-      const existingPendingCount = Number(existingAlert.pending_count || 0);
-      const existingOwner = String(existingAlert.requested_by_name || "").trim().toUpperCase();
-      const existingSource = String(existingAlert.source || "").trim();
-
-      if (
-        existingPendingCount === pendingCount &&
-        existingOwner === AUTOMATIC_SUPPORT_ALERT_BOT_NAME &&
-        existingSource === AUTOMATIC_SUPPORT_ALERT_SOURCE
-      ) {
-        return {
-          todayLima,
-          pendingCount,
-          created: false,
-          updated: false,
-          skipped: false,
-        };
-      }
-
-      const updateResult = await runLoggedQuery(
-        "support_requests.automatic_alert.update_today",
-        { todayLima, supportRequestId: existingAlert.id, pendingCount },
-        () =>
-          client
-            .from("support_requests")
-            .update({
-              requested_by_id: AUTOMATIC_SUPPORT_ALERT_BOT_ID,
-              requested_by_name: AUTOMATIC_SUPPORT_ALERT_BOT_NAME,
-              requested_by_role: AUTOMATIC_SUPPORT_ALERT_BOT_ROLE,
-              reason,
-              pending_count: pendingCount,
-              status: "pendiente",
-              source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
-              updated_at: nowIso,
-            })
-            .eq("id", existingAlert.id)
-            .select("*")
-            .single()
-      );
-
-      if (updateResult?.error) {
-        throw updateResult.error;
-      }
-
-      return {
-        todayLima,
-        pendingCount,
-        created: false,
-        updated: true,
-        skipped: false,
-        data: updateResult?.data || null,
-      };
-    }
 
     const insertResult = await runLoggedQuery(
       "support_requests.automatic_alert.create_today",
@@ -1179,6 +1117,10 @@ async function syncAutomaticSupportAlert() {
 }
 
 function queueAutomaticSupportAlertCheck() {
+  if (!AUTOMATIC_SUPPORT_ALERT_ENABLED) {
+    return;
+  }
+
   if (automaticSupportAlertDebounceTimeout) {
     return;
   }
@@ -1192,6 +1134,10 @@ function queueAutomaticSupportAlertCheck() {
 }
 
 function startAutomaticSupportAlertMonitor() {
+  if (!AUTOMATIC_SUPPORT_ALERT_ENABLED) {
+    return;
+  }
+
   queueAutomaticSupportAlertCheck();
 }
 
