@@ -20,7 +20,7 @@ let envLoaded = false;
 let sqlServerPool = null;
 let sqlServerPoolSignature = null;
 const QUERY_LOGGING_ENABLED = process.env.LOG_QUERIES !== "false";
-const AUTOMATIC_SUPPORT_ALERT_THRESHOLD = 3;
+const AUTOMATIC_SUPPORT_ALERT_THRESHOLD = 4;
 const AUTOMATIC_SUPPORT_ALERT_DEBOUNCE_MS = 5_000;
 const AUTOMATIC_SUPPORT_ALERT_SOURCE = "workload-auto";
 const AUTOMATIC_SUPPORT_ALERT_BOT_ID = "system-bot";
