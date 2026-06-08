@@ -66,8 +66,6 @@ export function useDepositDashboard() {
   const workloadAlarmRef = useRef({
     lastTriggeredAt: 0,
     lastCount: 0,
-    lastAutoRequestedAt: 0,
-    lastAutoRequestedCount: 0,
   });
   const lastQueryRef = useRef({ type: null, value: null });
   const refreshDepositsRef = useRef(null);
@@ -335,7 +333,7 @@ export function useDepositDashboard() {
   );
 
   const triggerWorkloadAlarm = useCallback(
-    async (reason = "") => {
+    async () => {
       const pendingCount = pendingWorkloadCount;
 
       if (pendingCount < WORKLOAD_ALERT_THRESHOLD) {
@@ -356,35 +354,15 @@ export function useDepositDashboard() {
       workloadAlarmRef.current = {
         lastTriggeredAt: now,
         lastCount: pendingCount,
-        lastAutoRequestedAt: workloadAlarmRef.current.lastAutoRequestedAt,
-        lastAutoRequestedCount: workloadAlarmRef.current.lastAutoRequestedCount,
       };
 
+      // Las alertas automáticas se registran desde el backend.
       await Promise.allSettled([playAlarmTone()]);
       vibrateAlarm();
 
-      const shouldRequestSupport =
-        workloadAlarmRef.current.lastAutoRequestedCount !== pendingCount ||
-        now - workloadAlarmRef.current.lastAutoRequestedAt >= WORKLOAD_ALERT_COOLDOWN_MS;
-
-      if (shouldRequestSupport) {
-        try {
-          await createSupportRequestOnBackend({
-            reason:
-              reason.trim() ||
-              `Alerta automatica: hay ${pendingCount} depositos pendientes y se necesita apoyo.`,
-            source: "workload-auto",
-          });
-          workloadAlarmRef.current.lastAutoRequestedAt = now;
-          workloadAlarmRef.current.lastAutoRequestedCount = pendingCount;
-        } catch (error) {
-          console.warn("No se pudo crear la solicitud automatica de apoyo:", error);
-        }
-      }
-
       return true;
     },
-    [createSupportRequestOnBackend, pendingWorkloadCount, playAlarmTone, vibrateAlarm]
+    [pendingWorkloadCount, playAlarmTone, vibrateAlarm]
   );
 
   const requestReplacementHelp = useCallback(

@@ -1,6 +1,9 @@
 using Avalonia.Controls;
+using Avalonia;
 using Avalonia.Interactivity;
+using Avalonia.Input;
 using DepositosTrayAgent.Models;
+using WinFormsScreen = System.Windows.Forms.Screen;
 
 namespace DepositosTrayAgent.Views;
 
@@ -15,6 +18,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         Opened += MainWindow_Opened;
         Closing += MainWindow_Closing;
+        Opened += (_, _) => DockToTaskbar();
+        RootBorder.PointerPressed += RootBorder_PointerPressed;
         SaveButton.Click += SaveButton_Click;
         TestButton.Click += TestButton_Click;
         OpenDashboardButton.Click += OpenDashboardButton_Click;
@@ -28,7 +33,6 @@ public partial class MainWindow : Window
         AgentGroupBox.Text = _controller.Settings.AgentGroup;
         MachineAliasBox.Text = _controller.Settings.MachineAlias;
         StatusTextBlock.Text = _controller.StatusText;
-        FooterTextBlock.Text = "Backend: " + _controller.Settings.BackendBaseUrl;
     }
 
     private async void SaveButton_Click(object? sender, RoutedEventArgs e)
@@ -43,7 +47,6 @@ public partial class MainWindow : Window
         });
 
         StatusTextBlock.Text = _controller.StatusText;
-        FooterTextBlock.Text = "Configuracion guardada.";
     }
 
     private async void TestButton_Click(object? sender, RoutedEventArgs e)
@@ -55,6 +58,45 @@ public partial class MainWindow : Window
     private void OpenDashboardButton_Click(object? sender, RoutedEventArgs e)
     {
         _controller.OpenDashboard();
+    }
+
+    private void DockToTaskbar()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var screen = WinFormsScreen.PrimaryScreen;
+        if (screen == null)
+        {
+            return;
+        }
+
+        var screenBounds = screen.Bounds;
+        var workingArea = screen.WorkingArea;
+        var taskbarThickness = screenBounds.Height - workingArea.Height;
+        if (taskbarThickness <= 0)
+        {
+            taskbarThickness = 40;
+        }
+
+        var targetHeight = Math.Max(taskbarThickness, 36);
+        var targetWidth = Math.Min(1280, Math.Max(900, workingArea.Width - 16));
+        var left = screenBounds.Right - targetWidth;
+        var top = screenBounds.Bottom - targetHeight;
+
+        Width = targetWidth;
+        Height = targetHeight;
+        Position = new PixelPoint(left, top);
+    }
+
+    private void RootBorder_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.Source == RootBorder && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            BeginMoveDrag(e);
+        }
     }
 
     private void MainWindow_Closing(object? sender, WindowClosingEventArgs e)

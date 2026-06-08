@@ -163,7 +163,7 @@ function App({ uiMode = "default" }) {
         <div className="flex items-center">
           <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
           <p className="ml-4 text-lg text-gray-700 dark:text-gray-300">
-            Inicializando aplicaciÃ³n...
+            Inicializando aplicación...
           </p>
         </div>
       </div>

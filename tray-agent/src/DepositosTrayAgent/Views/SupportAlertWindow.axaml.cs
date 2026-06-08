@@ -25,7 +25,7 @@ public partial class SupportAlertWindow : Window
         RequestId = request.Id;
         InitializeComponent();
 
-        ReasonText.Text = request.Reason ?? "Sin motivo";
+        ReasonText.Text = BuildReasonText(request);
         OpenDashboardButton.Click += async (_, _) =>
         {
             if (await _controller.AcknowledgeAndOpenDashboardAsync(_request))
@@ -33,7 +33,13 @@ public partial class SupportAlertWindow : Window
                 Close();
             }
         };
-        DismissButton.Click += (_, _) => Close();
+        DismissButton.Click += async (_, _) =>
+        {
+            if (await _controller.ExpireSupportRequestAsync(_request))
+            {
+                Close();
+            }
+        };
 
         _flashTimer = new DispatcherTimer
         {
@@ -44,7 +50,7 @@ public partial class SupportAlertWindow : Window
 
         _autoCloseTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(15),
+            Interval = TimeSpan.FromSeconds(5),
         };
         _autoCloseTimer.Tick += (_, _) =>
         {
@@ -70,17 +76,76 @@ public partial class SupportAlertWindow : Window
             return;
         }
 
-        const int margin = 24;
         var workingArea = screen.WorkingArea;
-        var x = workingArea.X + workingArea.Width - (int)Math.Round(Bounds.Width) - margin;
-        var y = workingArea.Y + workingArea.Height - (int)Math.Round(Bounds.Height) - margin;
+        var screenBounds = screen.Bounds;
+        var taskbarThickness = screenBounds.Height - workingArea.Height;
+        if (taskbarThickness <= 0)
+        {
+            taskbarThickness = 40;
+        }
 
-        Position = new PixelPoint(Math.Max(workingArea.X + margin, x), Math.Max(workingArea.Y + margin, y));
+        var width = Math.Min((int)Math.Round(Width), Math.Max(320, workingArea.Width / 3));
+        var height = Math.Max((int)Math.Round(Height), taskbarThickness);
+        var left = screenBounds.Right - width;
+        var top = screenBounds.Bottom - height;
+
+        Width = width;
+        Height = height;
+        Position = new PixelPoint(left, top);
     }
 
     private void ToggleFlash()
     {
         _flashToggle = !_flashToggle;
         RootBorder.Background = new SolidColorBrush(Avalonia.Media.Color.Parse(_flashToggle ? "#EF4444" : "#B91C1C"));
+    }
+
+    private static string BuildReasonText(SupportRequestRecord request)
+    {
+        var reason = (request.Reason ?? "Sin motivo").Trim();
+        var source = request.Source?.Trim().ToLowerInvariant();
+        var isAutomatic = source is "automatic" or "auto" or "polling";
+
+        if (TryStripAutomaticPrefix(ref reason))
+        {
+            isAutomatic = true;
+        }
+
+        reason = reason.Trim();
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            reason = "Sin motivo";
+        }
+
+        if (isAutomatic && reason.Length > 70)
+        {
+            reason = reason[..67].TrimEnd() + "...";
+        }
+
+        return reason;
+    }
+
+    private static bool TryStripAutomaticPrefix(ref string reason)
+    {
+        var prefixes = new[]
+        {
+            "Alerta automatica:",
+            "Alerta automática:",
+            "Alerta automatica -",
+            "Alerta automática -",
+        };
+
+        foreach (var prefix in prefixes)
+        {
+            if (!reason.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            reason = reason[prefix.Length..].TrimStart(' ', ':', '-', '–');
+            return true;
+        }
+
+        return false;
     }
 }

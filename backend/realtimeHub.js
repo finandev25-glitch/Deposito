@@ -12,12 +12,20 @@ let supabaseClient = null;
 let realtimeWorker = null;
 let realtimeWorkerRestartTimeout = null;
 let realtimeStatus = "DISCONNECTED";
+let automaticSupportAlertDebounceTimeout = null;
+let automaticSupportAlertRunning = false;
 const clients = new Set();
 const voucherExportJobs = new Map();
 let envLoaded = false;
 let sqlServerPool = null;
 let sqlServerPoolSignature = null;
 const QUERY_LOGGING_ENABLED = process.env.LOG_QUERIES !== "false";
+const AUTOMATIC_SUPPORT_ALERT_THRESHOLD = 3;
+const AUTOMATIC_SUPPORT_ALERT_DEBOUNCE_MS = 5_000;
+const AUTOMATIC_SUPPORT_ALERT_SOURCE = "workload-auto";
+const AUTOMATIC_SUPPORT_ALERT_BOT_ID = "system-bot";
+const AUTOMATIC_SUPPORT_ALERT_BOT_NAME = "BOT";
+const AUTOMATIC_SUPPORT_ALERT_BOT_ROLE = "bot";
 const YCLOUD_API_BASE_URL = "https://api.ycloud.com/v2";
 const YCLOUD_SEND_URL = `${YCLOUD_API_BASE_URL}/whatsapp/messages/sendDirectly`;
 const YCLOUD_MESSAGES_URL = `${YCLOUD_API_BASE_URL}/whatsapp/messages`;
@@ -919,6 +927,272 @@ function normalizeDateOnly(value) {
   }
 
   return parsed.toISOString().slice(0, 10);
+}
+
+function getLimaDateOnly(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+function buildLimaDayRange(dateOnly) {
+  const normalized = normalizeDateOnly(dateOnly);
+  if (!normalized) {
+    return null;
+  }
+
+  const start = new Date(`${normalized}T00:00:00-05:00`);
+  const end = new Date(start.getTime());
+  end.setDate(end.getDate() + 1);
+
+  return {
+    sinceIso: start.toISOString(),
+    untilIso: end.toISOString(),
+  };
+}
+
+function formatAutomaticSupportReason(pendingCount, dateOnly) {
+  const safeCount = Number.isFinite(Number(pendingCount)) ? Number(pendingCount) : 0;
+  return `Hoy (${dateOnly}) hay ${safeCount} depositos pendientes en Lima.`;
+}
+
+function isSupportRequestPendingToday(record, todayLima = getLimaDateOnly()) {
+  if (!record) {
+    return false;
+  }
+
+  const status = String(record.status || "").trim().toLowerCase();
+  if (status !== "pendiente") {
+    return false;
+  }
+
+  const dayRange = buildLimaDayRange(todayLima);
+  if (!dayRange || !record.created_at) {
+    return false;
+  }
+
+  const createdAt = new Date(record.created_at);
+  if (Number.isNaN(createdAt.getTime())) {
+    return false;
+  }
+
+  return createdAt >= new Date(dayRange.sinceIso) && createdAt < new Date(dayRange.untilIso);
+}
+
+function shouldBroadcastSupportRequestEvent(eventType, nextRow, previousRow = null) {
+  const normalizedEvent = String(eventType || "").trim().toUpperCase();
+
+  if (normalizedEvent === "INSERT") {
+    return isSupportRequestPendingToday(nextRow);
+  }
+
+  if (normalizedEvent === "UPDATE") {
+    return isSupportRequestPendingToday(nextRow) || isSupportRequestPendingToday(previousRow);
+  }
+
+  if (normalizedEvent === "DELETE") {
+    return isSupportRequestPendingToday(previousRow);
+  }
+
+  return false;
+}
+
+async function syncAutomaticSupportAlert() {
+  if (automaticSupportAlertRunning) {
+    return null;
+  }
+
+  const client = getSupabaseAdminClient();
+  if (!client) {
+    return null;
+  }
+
+  automaticSupportAlertRunning = true;
+  try {
+    const todayLima = getLimaDateOnly(new Date());
+    if (!todayLima) {
+      return null;
+    }
+
+    const pendingCountResult = await runLoggedQuery(
+      "depositos.automatic_alert.pending_count",
+      { todayLima, threshold: AUTOMATIC_SUPPORT_ALERT_THRESHOLD },
+      () =>
+        client
+          .from("depositos")
+          .select("id", { count: "exact", head: true })
+          .eq("estado", "pendiente")
+          .eq("fecha_solo_date", todayLima)
+    );
+
+    if (pendingCountResult?.error) {
+      throw pendingCountResult.error;
+    }
+
+    const pendingCount = Number(pendingCountResult?.count || 0);
+    if (!Number.isFinite(pendingCount) || pendingCount < AUTOMATIC_SUPPORT_ALERT_THRESHOLD) {
+      return {
+        todayLima,
+        pendingCount: Number.isFinite(pendingCount) ? pendingCount : 0,
+        created: false,
+        updated: false,
+        skipped: true,
+      };
+    }
+
+    const dayRange = buildLimaDayRange(todayLima);
+    if (!dayRange) {
+      return null;
+    }
+
+    const existingResult = await runLoggedQuery(
+      "support_requests.automatic_alert.find_today",
+      { todayLima, source: AUTOMATIC_SUPPORT_ALERT_SOURCE },
+      () =>
+        client
+          .from("support_requests")
+          .select("id, pending_count, status, created_at, updated_at, requested_by_name, requested_by_id, source")
+          .eq("source", AUTOMATIC_SUPPORT_ALERT_SOURCE)
+          .gte("created_at", dayRange.sinceIso)
+          .lt("created_at", dayRange.untilIso)
+          .order("created_at", { ascending: false })
+          .limit(1)
+    );
+
+    if (existingResult?.error) {
+      throw existingResult.error;
+    }
+
+    const existingAlert = Array.isArray(existingResult?.data) ? existingResult.data[0] || null : null;
+    const reason = formatAutomaticSupportReason(pendingCount, todayLima);
+    const nowIso = new Date().toISOString();
+
+    if (existingAlert?.id) {
+      const existingPendingCount = Number(existingAlert.pending_count || 0);
+      const existingOwner = String(existingAlert.requested_by_name || "").trim().toUpperCase();
+      const existingSource = String(existingAlert.source || "").trim();
+
+      if (
+        existingPendingCount === pendingCount &&
+        existingOwner === AUTOMATIC_SUPPORT_ALERT_BOT_NAME &&
+        existingSource === AUTOMATIC_SUPPORT_ALERT_SOURCE
+      ) {
+        return {
+          todayLima,
+          pendingCount,
+          created: false,
+          updated: false,
+          skipped: false,
+        };
+      }
+
+      const updateResult = await runLoggedQuery(
+        "support_requests.automatic_alert.update_today",
+        { todayLima, supportRequestId: existingAlert.id, pendingCount },
+        () =>
+          client
+            .from("support_requests")
+            .update({
+              requested_by_id: AUTOMATIC_SUPPORT_ALERT_BOT_ID,
+              requested_by_name: AUTOMATIC_SUPPORT_ALERT_BOT_NAME,
+              requested_by_role: AUTOMATIC_SUPPORT_ALERT_BOT_ROLE,
+              reason,
+              pending_count: pendingCount,
+              status: "pendiente",
+              source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
+              updated_at: nowIso,
+            })
+            .eq("id", existingAlert.id)
+            .select("*")
+            .single()
+      );
+
+      if (updateResult?.error) {
+        throw updateResult.error;
+      }
+
+      return {
+        todayLima,
+        pendingCount,
+        created: false,
+        updated: true,
+        skipped: false,
+        data: updateResult?.data || null,
+      };
+    }
+
+    const insertResult = await runLoggedQuery(
+      "support_requests.automatic_alert.create_today",
+      { todayLima, pendingCount },
+      () =>
+        client
+          .from("support_requests")
+          .insert({
+            requested_by_id: AUTOMATIC_SUPPORT_ALERT_BOT_ID,
+            requested_by_name: AUTOMATIC_SUPPORT_ALERT_BOT_NAME,
+            requested_by_role: AUTOMATIC_SUPPORT_ALERT_BOT_ROLE,
+            reason,
+            pending_count: pendingCount,
+            status: "pendiente",
+            source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
+            created_at: nowIso,
+            updated_at: nowIso,
+          })
+          .select("*")
+          .single()
+    );
+
+    if (insertResult?.error) {
+      throw insertResult.error;
+    }
+
+    return {
+      todayLima,
+      pendingCount,
+      created: true,
+      updated: false,
+      skipped: false,
+      data: insertResult?.data || null,
+    };
+  } finally {
+    automaticSupportAlertRunning = false;
+  }
+}
+
+function queueAutomaticSupportAlertCheck() {
+  if (automaticSupportAlertDebounceTimeout) {
+    return;
+  }
+
+  automaticSupportAlertDebounceTimeout = setTimeout(() => {
+    automaticSupportAlertDebounceTimeout = null;
+    void syncAutomaticSupportAlert().catch((error) => {
+      console.warn("[support-requests] automatic alert sync failed:", error?.message || error);
+    });
+  }, AUTOMATIC_SUPPORT_ALERT_DEBOUNCE_MS);
+}
+
+function startAutomaticSupportAlertMonitor() {
+  queueAutomaticSupportAlertCheck();
 }
 
 function resolveSqlServerEmpresaSuffix(empresa) {
@@ -3242,8 +3516,10 @@ function registerJsonRoutes(app) {
         return res.status(503).json({ error: "Supabase no esta configurado en el backend" });
       }
 
-      const status = String(req.query.status || "").trim();
+      const status = String(req.query.status || "").trim().toLowerCase();
       const limit = Math.min(Number(req.query.limit || 50), 200);
+      const todayLima = getLimaDateOnly();
+      const todayRange = buildLimaDayRange(todayLima);
 
       let query = client
         .from("support_requests")
@@ -3255,9 +3531,15 @@ function registerJsonRoutes(app) {
         query = query.eq("status", status);
       }
 
+      if (status === "pendiente" && todayRange) {
+        query = query
+          .gte("created_at", todayRange.sinceIso)
+          .lt("created_at", todayRange.untilIso);
+      }
+
       const { data, error } = await runLoggedQuery(
         "support_requests.list",
-        { status, limit },
+        { status, limit, todayLima, todayOnly: status === "pendiente" },
         () => query
       );
 
@@ -3275,7 +3557,7 @@ function registerJsonRoutes(app) {
         return res.status(503).json({ error: "Supabase no esta configurado en el backend" });
       }
 
-      const status = String(req.query.status || "pendiente").trim() || "pendiente";
+      const status = String(req.query.status || "pendiente").trim().toLowerCase() || "pendiente";
       const daysRaw = Number(req.query.days || 30);
       const days = Number.isFinite(daysRaw) ? Math.min(Math.max(Math.trunc(daysRaw), 1), 180) : 30;
       const timeZone = "America/Lima";
@@ -3470,11 +3752,8 @@ function registerJsonRoutes(app) {
       });
       const status = String(body.status || "").trim().toLowerCase();
       const acknowledgedBy = String(body.acknowledged_by || body.acknowledgedBy || "").trim();
-      const resolvedAtRaw = body.resolved_at || body.resolvedAt || "";
       const notes = String(body.notes || "").trim();
       const hasBodyContent = body && typeof body === "object" && Object.keys(body).length > 0;
-      const nowIso = new Date().toISOString();
-      let resolvedAt = nowIso;
 
       if (!requestId) {
         return res.status(400).json({ error: "id es requerido" });
@@ -3484,17 +3763,8 @@ function registerJsonRoutes(app) {
         return res.status(400).json({ error: "body incompleto" });
       }
 
-      if (!["atendido", "vencido"].includes(status)) {
+      if (!["atendido", "vencido", "vencida"].includes(status)) {
         return res.status(400).json({ error: "status invalido" });
-      }
-
-      if (resolvedAtRaw) {
-        const parsedResolvedAt = new Date(resolvedAtRaw);
-        if (Number.isNaN(parsedResolvedAt.getTime())) {
-          return res.status(400).json({ error: "resolved_at invalido" });
-        }
-
-        resolvedAt = parsedResolvedAt.toISOString();
       }
 
       if (status === "atendido" && !acknowledgedBy) {
@@ -3504,18 +3774,16 @@ function registerJsonRoutes(app) {
       const result =
         status === "atendido"
           ? await updateSupportRequestAsAcknowledged(client, requestId, acknowledgedBy, {
-              resolvedAt,
               notes: notes || "Reconocido desde la app de bandeja",
             })
           : await updateSupportRequestAsExpired(client, requestId, {
-              resolvedAt,
               notes: notes || "Vencido por expiración en la app de bandeja",
             });
       if (result.statusCode === 404) {
         return res.status(404).json({ error: result.error });
       }
 
-      broadcastSupportRequestChange("UPDATE", result.data, null, { source: "api/support-requests/:id" });
+      broadcastSupportRequestChange("UPDATE", result.data, result.oldData || null, { source: "api/support-requests/:id" });
 
       res.status(200).json({ data: result.data });
     } catch (error) {
@@ -5156,6 +5424,10 @@ function broadcastDepositChange(eventType, row, oldRow = null, meta = {}) {
 }
 
 function broadcastSupportRequestChange(eventType, row, oldRow = null, meta = {}) {
+  if (!shouldBroadcastSupportRequestEvent(eventType, row, oldRow)) {
+    return;
+  }
+
   const event = {
     type: "support-request",
     eventType,
@@ -5176,13 +5448,12 @@ function broadcastSupportRequestChange(eventType, row, oldRow = null, meta = {})
 
 async function updateSupportRequestAsAcknowledged(client, requestId, acknowledgedBy, options = {}) {
   const nowIso = new Date().toISOString();
-  const resolvedAt = options.resolvedAt || nowIso;
   const updates = {
     status: "atendido",
     acknowledged_by: acknowledgedBy,
     acknowledged_at: nowIso,
     resolved_by: acknowledgedBy,
-    resolved_at: resolvedAt,
+    resolved_at: nowIso,
     notes: options.notes || "Reconocido desde la app de bandeja",
     updated_at: nowIso,
   };
@@ -5190,7 +5461,7 @@ async function updateSupportRequestAsAcknowledged(client, requestId, acknowledge
   const existingRecordResult = await runLoggedQuery(
     "support_requests.findById",
     { requestId },
-    () => client.from("support_requests").select("id").eq("id", requestId).maybeSingle()
+    () => client.from("support_requests").select("*").eq("id", requestId).maybeSingle()
   );
 
   if (existingRecordResult.error) throw existingRecordResult.error;
@@ -5206,15 +5477,15 @@ async function updateSupportRequestAsAcknowledged(client, requestId, acknowledge
 
   if (error) throw error;
 
-  return { statusCode: 200, data };
+  return { statusCode: 200, data, oldData: existingRecordResult.data };
 }
 
 async function updateSupportRequestAsExpired(client, requestId, options = {}) {
   const nowIso = new Date().toISOString();
-  const resolvedAt = options.resolvedAt || nowIso;
   const updates = {
-    status: "vencido",
-    resolved_at: resolvedAt,
+    status: "vencida",
+    resolved_at: nowIso,
+    resolved_by: options.resolvedBy || "system",
     notes: options.notes || "Vencido por expiración en la app de bandeja",
     updated_at: nowIso,
   };
@@ -5222,7 +5493,7 @@ async function updateSupportRequestAsExpired(client, requestId, options = {}) {
   const existingRecordResult = await runLoggedQuery(
     "support_requests.findById",
     { requestId },
-    () => client.from("support_requests").select("id").eq("id", requestId).maybeSingle()
+    () => client.from("support_requests").select("*").eq("id", requestId).maybeSingle()
   );
 
   if (existingRecordResult.error) throw existingRecordResult.error;
@@ -5238,7 +5509,7 @@ async function updateSupportRequestAsExpired(client, requestId, options = {}) {
 
   if (error) throw error;
 
-  return { statusCode: 200, data };
+  return { statusCode: 200, data, oldData: existingRecordResult.data };
 }
 
 function summarizeRealtimeError(error) {
@@ -5305,6 +5576,7 @@ function handleRealtimeWorkerMessage(message) {
   }
 
   if (message.type === "deposit-change") {
+    queueAutomaticSupportAlertCheck();
     broadcast({
       type: "deposit-change",
       eventType: message.eventType,
@@ -5343,6 +5615,7 @@ export function startDepositRealtimeHub() {
   }
 
   realtimeStatus = "STARTING";
+  startAutomaticSupportAlertMonitor();
   const realtimeWorkerPath = getRealtimeWorkerPath();
   const worker = fork(realtimeWorkerPath, [], {
     env: {
