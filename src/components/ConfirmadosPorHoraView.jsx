@@ -238,17 +238,6 @@ export default function ConfirmadosPorHoraView() {
       .filter((bucket) => bucket.count > 0)
       .sort((a, b) => b.count - a.count || a.hour - b.hour)[0] || null;
 
-    const topHours = [...selectedSeries]
-      .filter((bucket) => DISPLAY_HOURS.includes(bucket.hour))
-      .filter((bucket) => bucket.count > 0)
-      .sort((a, b) => b.count - a.count || a.hour - b.hour)
-      .slice(0, 5)
-      .map((bucket, index) => ({
-        ...bucket,
-        rank: index + 1,
-        percentage: confirmedRows.length ? Number(((bucket.count / confirmedRows.length) * 100).toFixed(1)) : 0,
-      }));
-
     const totalConfirmed = confirmedRows.length;
     const averagePerHour = Number((totalConfirmed / 24).toFixed(2));
     const activeHours = selectedSeries.filter((bucket) => bucket.count > 0).length;
@@ -259,7 +248,6 @@ export default function ConfirmadosPorHoraView() {
       confirmedRows,
       selectedSeries,
       peakBucket,
-      topHours,
       topUsers,
       totalConfirmed,
       averagePerHour,
@@ -520,53 +508,6 @@ export default function ConfirmadosPorHoraView() {
             </div>
 
             <div className="space-y-6">
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-800">
-                <h3 className="mb-4 text-lg font-bold text-slate-900 dark:text-white">
-                  Horas pico
-                </h3>
-
-                {analytics.topHours.length > 0 ? (
-                  <div className="space-y-3">
-                    {analytics.topHours.map((hour) => (
-                      <motion.div
-                        key={hour.hour}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={`rounded-2xl border p-4 ${
-                          hour.rank === 1
-                            ? "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30"
-                            : "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                              {hour.label}
-                            </p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">
-                              {hour.count.toLocaleString("es-PE")} confirmados
-                            </p>
-                          </div>
-                          <div className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 shadow-sm dark:bg-slate-800 dark:text-slate-200">
-                            #{hour.rank}
-                          </div>
-                        </div>
-                        <div className="mt-3 flex items-center justify-between text-sm">
-                          <span className="text-slate-600 dark:text-slate-300">Apoyo sugerido</span>
-                          <span className="font-semibold text-slate-900 dark:text-white">
-                            {hour.suggested_support} personas
-                          </span>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    No hay horas pico registradas para el periodo seleccionado.
-                  </p>
-                )}
-              </div>
-
               <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white shadow-sm dark:border-slate-800">
                 <div className="flex items-start gap-3">
                   <div className="rounded-2xl bg-white/10 p-3">
