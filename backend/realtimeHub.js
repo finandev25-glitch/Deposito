@@ -972,7 +972,7 @@ function buildLimaDayRange(dateOnly) {
 
 function formatAutomaticSupportReason(pendingCount, dateOnly) {
   const safeCount = Number.isFinite(Number(pendingCount)) ? Number(pendingCount) : 0;
-  return `Hoy (${dateOnly}) hay ${safeCount} depositos pendientes en Lima.`;
+  return `Hay ${safeCount} depositos x confirmar`;
 }
 
 function isSupportRequestPendingToday(record, todayLima = getLimaDateOnly()) {
