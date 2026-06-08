@@ -29,6 +29,9 @@ public sealed class SupportRequestRecord
     [JsonPropertyName("source")]
     public string? Source { get; set; }
 
+    [JsonPropertyName("deposit_id")]
+    public string? DepositId { get; set; }
+
     [JsonPropertyName("acknowledged_by")]
     public string? AcknowledgedBy { get; set; }
 

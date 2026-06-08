@@ -14,15 +14,17 @@ let realtimeWorkerRestartTimeout = null;
 let realtimeStatus = "DISCONNECTED";
 let automaticSupportAlertDebounceTimeout = null;
 let automaticSupportAlertRunning = false;
+let automaticSupportAlertReviewInterval = null;
+let automaticSupportAlertLastReviewedAtIso = new Date(Date.now() - 15000).toISOString();
 const clients = new Set();
 const voucherExportJobs = new Map();
 let envLoaded = false;
 let sqlServerPool = null;
 let sqlServerPoolSignature = null;
 const QUERY_LOGGING_ENABLED = process.env.LOG_QUERIES !== "false";
-const AUTOMATIC_SUPPORT_ALERT_ENABLED = false;
 const AUTOMATIC_SUPPORT_ALERT_THRESHOLD = 4;
-const AUTOMATIC_SUPPORT_ALERT_DEBOUNCE_MS = 5_000;
+const AUTOMATIC_SUPPORT_ALERT_REVIEW_INTERVAL_MS = 15_000;
+const AUTOMATIC_SUPPORT_ALERT_DEBOUNCE_MS = 1_000;
 const AUTOMATIC_SUPPORT_ALERT_SOURCE = "workload-auto";
 const AUTOMATIC_SUPPORT_ALERT_BOT_ID = "system-bot";
 const AUTOMATIC_SUPPORT_ALERT_BOT_NAME = "BOT";
@@ -971,7 +973,7 @@ function buildLimaDayRange(dateOnly) {
   };
 }
 
-function formatAutomaticSupportReason(pendingCount, dateOnly) {
+function formatAutomaticSupportReason(pendingCount, depositId) {
   const safeCount = Number.isFinite(Number(pendingCount)) ? Number(pendingCount) : 0;
   const now = new Date();
   const timeFormatter = new Intl.DateTimeFormat("es-PE", {
@@ -984,7 +986,196 @@ function formatAutomaticSupportReason(pendingCount, dateOnly) {
   const hourPart = parts.find((part) => part.type === "hour")?.value || "00";
   const minutePart = parts.find((part) => part.type === "minute")?.value || "00";
   const timeLabel = `${hourPart}:${minutePart}`;
-  return `Hay ${safeCount} depositos x confirmar - ${timeLabel}`;
+  const depositLabel = depositId ? `deposito ${String(depositId).trim()}` : "deposito nuevo";
+  return `Alerta automatica por ${depositLabel}: hay ${safeCount} depositos pendientes - ${timeLabel}`;
+}
+
+function getDepositCreatedAtIso(deposit) {
+  const rawValue = deposit?.created_at || deposit?.fecha_registro || null;
+  if (!rawValue) {
+    return null;
+  }
+
+  const createdAt = new Date(rawValue);
+  if (Number.isNaN(createdAt.getTime())) {
+    return null;
+  }
+
+  return createdAt.toISOString();
+}
+
+function advanceAutomaticSupportAlertCursor(candidateIso) {
+  const next = getDepositCreatedAtIso({ created_at: candidateIso });
+  if (!next) {
+    return;
+  }
+
+  const current = new Date(automaticSupportAlertLastReviewedAtIso);
+  if (Number.isNaN(current.getTime()) || new Date(next) > current) {
+    automaticSupportAlertLastReviewedAtIso = next;
+  }
+}
+
+function logAutomaticSupportAlertDecision(details) {
+  const payload = {
+    depositId: details?.depositId || null,
+    status: details?.status || null,
+    totalPending: Number.isFinite(Number(details?.totalPending))
+      ? Number(details.totalPending)
+      : 0,
+    action: details?.action || "discarded",
+    trigger: details?.trigger || "realtime-worker",
+    reason: details?.reason || null,
+  };
+
+  console.log("[support-requests] automatic alert decision", payload);
+}
+
+async function getCurrentPendingDepositCount(client) {
+  const pendingCountResult = await runLoggedQuery(
+    "depositos.automatic_alert.pending_count",
+    {},
+    () =>
+      client
+        .from("depositos")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "pendiente")
+  );
+
+  if (pendingCountResult?.error) {
+    throw pendingCountResult.error;
+  }
+
+  return Number(pendingCountResult?.count || 0);
+}
+
+async function hasAutomaticSupportAlertForDeposit(client, depositId) {
+  const existingAlertResult = await runLoggedQuery(
+    "support_requests.automatic_alert.find_existing",
+    { depositId },
+    () =>
+      client
+        .from("support_requests")
+        .select("id, status, source, deposit_id")
+        .eq("deposit_id", depositId)
+        .eq("source", AUTOMATIC_SUPPORT_ALERT_SOURCE)
+        .maybeSingle()
+  );
+
+  if (existingAlertResult?.error) {
+    throw existingAlertResult.error;
+  }
+
+  return existingAlertResult?.data || null;
+}
+
+async function processAutomaticSupportAlertCandidate(client, deposit, options = {}) {
+  const depositId = String(deposit?.id || "").trim();
+  const status = String(deposit?.estado || deposit?.status || "").trim().toLowerCase();
+  const trigger = String(options.trigger || "realtime-worker").trim() || "realtime-worker";
+  const totalPending = await getCurrentPendingDepositCount(client);
+
+  if (!depositId) {
+    logAutomaticSupportAlertDecision({
+      action: "discarded",
+      depositId: null,
+      status,
+      totalPending,
+      trigger,
+      reason: "deposito sin id",
+    });
+    return { skipped: true, reason: "deposito sin id" };
+  }
+
+  if (status !== "pendiente") {
+    logAutomaticSupportAlertDecision({
+      action: "discarded",
+      depositId,
+      status,
+      totalPending,
+      trigger,
+      reason: "estado distinto de pendiente",
+    });
+    return { skipped: true, reason: "estado distinto de pendiente" };
+  }
+
+  if (!Number.isFinite(totalPending) || totalPending < AUTOMATIC_SUPPORT_ALERT_THRESHOLD) {
+    logAutomaticSupportAlertDecision({
+      action: "discarded",
+      depositId,
+      status,
+      totalPending: Number.isFinite(totalPending) ? totalPending : 0,
+      trigger,
+      reason: "menos de 4 depositos pendientes",
+    });
+    return { skipped: true, totalPending, reason: "menos de 4 depositos pendientes" };
+  }
+
+  const existingAlert = await hasAutomaticSupportAlertForDeposit(client, depositId);
+  if (existingAlert) {
+    logAutomaticSupportAlertDecision({
+      action: "discarded",
+      depositId,
+      status,
+      totalPending,
+      trigger,
+      reason: "este deposito ya genero una alerta automatica",
+    });
+    return { skipped: true, totalPending, reason: "alerta automatica duplicada" };
+  }
+
+  const nowIso = new Date().toISOString();
+  const reason = formatAutomaticSupportReason(totalPending, depositId);
+  const payload = {
+    requested_by_id: AUTOMATIC_SUPPORT_ALERT_BOT_ID,
+    requested_by_name: AUTOMATIC_SUPPORT_ALERT_BOT_NAME,
+    requested_by_role: AUTOMATIC_SUPPORT_ALERT_BOT_ROLE,
+    reason,
+    pending_count: totalPending,
+    status: "pendiente",
+    source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
+    deposit_id: depositId,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+
+  const insertResult = await runLoggedQuery(
+    "support_requests.automatic_alert.create",
+    { depositId, totalPending, trigger },
+    () => client.from("support_requests").insert(payload).select("*").single()
+  );
+
+  if (insertResult?.error) {
+    if (String(insertResult.error?.code || "") === "23505") {
+      logAutomaticSupportAlertDecision({
+        action: "discarded",
+        depositId,
+        status,
+        totalPending,
+        trigger,
+        reason: "alerta automatica ya registrada por una condicion de carrera",
+      });
+      return { skipped: true, totalPending, reason: "duplicada en concurrencia" };
+    }
+
+    throw insertResult.error;
+  }
+
+  logAutomaticSupportAlertDecision({
+    action: "generated",
+    depositId,
+    status,
+    totalPending,
+    trigger,
+    reason: "umbral de pendientes alcanzado",
+  });
+
+  return {
+    skipped: false,
+    created: true,
+    totalPending,
+    data: insertResult?.data || null,
+  };
 }
 
 function isSupportRequestPendingToday(record, todayLima = getLimaDateOnly()) {
@@ -1029,10 +1220,6 @@ function shouldBroadcastSupportRequestEvent(eventType, nextRow, previousRow = nu
 }
 
 async function syncAutomaticSupportAlert() {
-  if (!AUTOMATIC_SUPPORT_ALERT_ENABLED) {
-    return null;
-  }
-
   if (automaticSupportAlertRunning) {
     return null;
   }
@@ -1044,72 +1231,50 @@ async function syncAutomaticSupportAlert() {
 
   automaticSupportAlertRunning = true;
   try {
-    const todayLima = getLimaDateOnly(new Date());
-    if (!todayLima) {
-      return null;
-    }
-
-    const pendingCountResult = await runLoggedQuery(
-      "depositos.automatic_alert.pending_count",
-      { todayLima, threshold: AUTOMATIC_SUPPORT_ALERT_THRESHOLD },
-      () =>
-        client
-          .from("depositos")
-          .select("id", { count: "exact", head: true })
-          .eq("estado", "pendiente")
-          .eq("fecha_solo_date", todayLima)
-    );
-
-    if (pendingCountResult?.error) {
-      throw pendingCountResult.error;
-    }
-
-    const pendingCount = Number(pendingCountResult?.count || 0);
-    if (!Number.isFinite(pendingCount) || pendingCount < AUTOMATIC_SUPPORT_ALERT_THRESHOLD) {
-      return {
-        todayLima,
-        pendingCount: Number.isFinite(pendingCount) ? pendingCount : 0,
-        created: false,
-        updated: false,
-        skipped: true,
-      };
-    }
-
-    const reason = formatAutomaticSupportReason(pendingCount, todayLima);
+    const sinceIso = automaticSupportAlertLastReviewedAtIso;
     const nowIso = new Date().toISOString();
-
-    const insertResult = await runLoggedQuery(
-      "support_requests.automatic_alert.create_today",
-      { todayLima, pendingCount },
+    const recentDepositsResult = await runLoggedQuery(
+      "depositos.automatic_alert.recent_inserts",
+      { sinceIso, untilIso: nowIso },
       () =>
-        client
-          .from("support_requests")
-          .insert({
-            requested_by_id: AUTOMATIC_SUPPORT_ALERT_BOT_ID,
-            requested_by_name: AUTOMATIC_SUPPORT_ALERT_BOT_NAME,
-            requested_by_role: AUTOMATIC_SUPPORT_ALERT_BOT_ROLE,
-            reason,
-            pending_count: pendingCount,
-            status: "pendiente",
-            source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
-            created_at: nowIso,
-            updated_at: nowIso,
-          })
-          .select("*")
-          .single()
+          client
+          .from("depositos")
+          .select("id, estado, created_at, fecha_registro")
+          .gt("created_at", sinceIso)
+          .lte("created_at", nowIso)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
     );
 
-    if (insertResult?.error) {
-      throw insertResult.error;
+    if (recentDepositsResult?.error) {
+      throw recentDepositsResult.error;
     }
+
+    const recentDeposits = Array.isArray(recentDepositsResult?.data)
+      ? recentDepositsResult.data
+      : [];
+    let processedCount = 0;
+    let generatedCount = 0;
+
+    for (const deposit of recentDeposits) {
+      processedCount += 1;
+      const result = await processAutomaticSupportAlertCandidate(client, deposit, {
+        trigger: "review",
+      });
+      if (!result?.skipped) {
+        generatedCount += 1;
+      }
+    }
+
+    automaticSupportAlertLastReviewedAtIso = nowIso;
 
     return {
-      todayLima,
-      pendingCount,
-      created: true,
-      updated: false,
-      skipped: false,
-      data: insertResult?.data || null,
+      sinceIso,
+      untilIso: nowIso,
+      reviewed: processedCount,
+      created: generatedCount,
+      skipped: processedCount - generatedCount,
+      data: recentDeposits,
     };
   } finally {
     automaticSupportAlertRunning = false;
@@ -1117,10 +1282,6 @@ async function syncAutomaticSupportAlert() {
 }
 
 function queueAutomaticSupportAlertCheck() {
-  if (!AUTOMATIC_SUPPORT_ALERT_ENABLED) {
-    return;
-  }
-
   if (automaticSupportAlertDebounceTimeout) {
     return;
   }
@@ -1134,8 +1295,12 @@ function queueAutomaticSupportAlertCheck() {
 }
 
 function startAutomaticSupportAlertMonitor() {
-  if (!AUTOMATIC_SUPPORT_ALERT_ENABLED) {
-    return;
+  if (!automaticSupportAlertReviewInterval) {
+    automaticSupportAlertReviewInterval = setInterval(() => {
+      void syncAutomaticSupportAlert().catch((error) => {
+        console.warn("[support-requests] automatic alert sync failed:", error?.message || error);
+      });
+    }, AUTOMATIC_SUPPORT_ALERT_REVIEW_INTERVAL_MS);
   }
 
   queueAutomaticSupportAlertCheck();
@@ -5522,7 +5687,25 @@ function handleRealtimeWorkerMessage(message) {
   }
 
   if (message.type === "deposit-change") {
-    queueAutomaticSupportAlertCheck();
+    if (String(message.eventType || "").trim().toUpperCase() === "INSERT") {
+      const client = getSupabaseAdminClient();
+      if (client) {
+        void (async () => {
+          try {
+            const deposit = message.new || null;
+            await processAutomaticSupportAlertCandidate(client, deposit, {
+              trigger: "realtime-worker",
+            });
+            advanceAutomaticSupportAlertCursor(getDepositCreatedAtIso(deposit) || new Date().toISOString());
+          } catch (error) {
+            console.warn(
+              "[support-requests] automatic alert insert processing failed:",
+              error?.message || error
+            );
+          }
+        })();
+      }
+    }
     broadcast({
       type: "deposit-change",
       eventType: message.eventType,

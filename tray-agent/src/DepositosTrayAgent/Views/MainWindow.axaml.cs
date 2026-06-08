@@ -73,18 +73,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        var screenBounds = screen.Bounds;
         var workingArea = screen.WorkingArea;
-        var taskbarThickness = screenBounds.Height - workingArea.Height;
-        if (taskbarThickness <= 0)
-        {
-            taskbarThickness = 40;
-        }
+        const int bottomMargin = 12;
+        const int leftMargin = 12;
 
-        var targetHeight = Math.Max(taskbarThickness, 36);
-        var targetWidth = Math.Min(1280, Math.Max(900, workingArea.Width - 16));
-        var left = screenBounds.Right - targetWidth;
-        var top = screenBounds.Bottom - targetHeight;
+        var targetHeight = Math.Max(186, (int)Math.Round(Height));
+        var targetWidth = Math.Min(460, Math.Max(420, workingArea.Width / 4));
+        var left = Math.Min(workingArea.Right - targetWidth, workingArea.Left + leftMargin);
+        var top = Math.Max(workingArea.Top, workingArea.Bottom - targetHeight - bottomMargin);
 
         Width = targetWidth;
         Height = targetHeight;

@@ -183,7 +183,7 @@ public sealed class SupportRequestMonitor
 
         if (record.CreatedAt == null)
         {
-            return false;
+            return true;
         }
 
         var createdAtLima = TimeZoneInfo.ConvertTime(record.CreatedAt.Value, LimaTimeZone);
@@ -199,13 +199,14 @@ public sealed class SupportRequestMonitor
             return false;
         }
 
-        return source is "manual"
-            or "manually"
-            or "manual-entry"
-            or "manual_entry"
-            or "backoffice"
-            or "db"
-            or "tabla";
+        return source.Contains("manual", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("backoffice", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("tabla", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("office", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("user", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("agent", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("operador", StringComparison.OrdinalIgnoreCase)
+            || source.Contains("admin", StringComparison.OrdinalIgnoreCase);
     }
 
     private static TimeZoneInfo ResolveLimaTimeZone()

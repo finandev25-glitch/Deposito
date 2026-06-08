@@ -224,6 +224,14 @@ public sealed class TrayAppController : IDisposable
             return;
         }
 
+        if (_currentAlertWindow != null &&
+            string.Equals(_currentAlertWindow.RequestId, requestId, StringComparison.OrdinalIgnoreCase) &&
+            _currentAlertWindow.IsWaitingForAutoClose &&
+            !_currentAlertWindow.HasTimedOut)
+        {
+            return;
+        }
+
         await _gate.WaitAsync();
         try
         {
