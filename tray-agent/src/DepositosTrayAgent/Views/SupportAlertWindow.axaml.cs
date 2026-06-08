@@ -14,7 +14,10 @@ public partial class SupportAlertWindow : Window
     private readonly SupportRequestRecord _request;
     private readonly DispatcherTimer _flashTimer;
     private readonly DispatcherTimer _autoCloseTimer;
+    private readonly DispatcherTimer _shakeTimer;
     private bool _flashToggle;
+    private PixelPoint _restingPosition;
+    private int _shakeStep;
 
     public string? RequestId { get; }
 
@@ -50,7 +53,7 @@ public partial class SupportAlertWindow : Window
 
         _autoCloseTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(5),
+            Interval = TimeSpan.FromSeconds(8),
         };
         _autoCloseTimer.Tick += (_, _) =>
         {
@@ -60,11 +63,18 @@ public partial class SupportAlertWindow : Window
         };
         _autoCloseTimer.Start();
 
+        _shakeTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(22),
+        };
+        _shakeTimer.Tick += (_, _) => ShakeWindow();
+
         Opened += (_, _) => PositionAsNotification();
         Closed += (_, _) =>
         {
             _flashTimer.Stop();
             _autoCloseTimer.Stop();
+            _shakeTimer.Stop();
         };
     }
 
@@ -91,13 +101,36 @@ public partial class SupportAlertWindow : Window
 
         Width = width;
         Height = height;
-        Position = new PixelPoint(left, top);
+        _restingPosition = new PixelPoint(left, top);
+        Position = _restingPosition;
+
+        _shakeStep = 0;
+        _shakeTimer.Start();
     }
 
     private void ToggleFlash()
     {
         _flashToggle = !_flashToggle;
         RootBorder.Background = new SolidColorBrush(Avalonia.Media.Color.Parse(_flashToggle ? "#EF4444" : "#B91C1C"));
+        ReasonText.Opacity = 1.0;
+        ReasonText.Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse(_flashToggle ? "#111111" : "#FFFFFF"));
+    }
+
+    private void ShakeWindow()
+    {
+        const int amplitude = 10;
+        const int cycles = 10;
+
+        if (_shakeStep >= cycles)
+        {
+            _shakeTimer.Stop();
+            Position = _restingPosition;
+            return;
+        }
+
+        var offset = (_shakeStep % 2 == 0) ? amplitude : -amplitude;
+        Position = new PixelPoint(_restingPosition.X + offset, _restingPosition.Y);
+        _shakeStep++;
     }
 
     private static string BuildReasonText(SupportRequestRecord request)

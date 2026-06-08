@@ -176,6 +176,11 @@ public sealed class SupportRequestMonitor
             return false;
         }
 
+        if (IsManualRecord(record))
+        {
+            return true;
+        }
+
         if (record.CreatedAt == null)
         {
             return false;
@@ -184,6 +189,23 @@ public sealed class SupportRequestMonitor
         var createdAtLima = TimeZoneInfo.ConvertTime(record.CreatedAt.Value, LimaTimeZone);
         var todayLima = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, LimaTimeZone).Date;
         return createdAtLima.Date == todayLima;
+    }
+
+    private static bool IsManualRecord(SupportRequestRecord record)
+    {
+        var source = record.Source?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return false;
+        }
+
+        return source is "manual"
+            or "manually"
+            or "manual-entry"
+            or "manual_entry"
+            or "backoffice"
+            or "db"
+            or "tabla";
     }
 
     private static TimeZoneInfo ResolveLimaTimeZone()
