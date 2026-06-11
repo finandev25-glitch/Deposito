@@ -1653,11 +1653,14 @@ Gracias por su comprensión.`;
 
             const telefonoFormateado = formatPhoneNumber(telefonoContacto);
 
+            const replyMessageId = getReplyMessageIdFromDeposit(deposit);
+
             const result = await yCloudService.sendTextMessage({
               configId: yCloudConfigId,
               to: telefonoFormateado,
               text: mensajeAntiguo,
-              replyToMessageId: getReplyMessageIdFromDeposit(deposit) || undefined,
+              context: replyMessageId ? { message_id: replyMessageId } : undefined,
+              replyToMessageId: replyMessageId || undefined,
             });
 
             if (result.success) {
@@ -1753,11 +1756,14 @@ ${reason}`;
 
           const telefonoFormateado = formatPhoneNumber(telefonoContacto);
 
+          const replyMessageId = getReplyMessageIdFromDeposit(deposit);
+
           const result = await yCloudService.sendTextMessage({
             configId: yCloudConfigId,
             to: telefonoFormateado,
             text: mensajeRechazo,
-            replyToMessageId: getReplyMessageIdFromDeposit(deposit) || undefined,
+            context: replyMessageId ? { message_id: replyMessageId } : undefined,
+            replyToMessageId: replyMessageId || undefined,
           });
 
           if (result.success) {
