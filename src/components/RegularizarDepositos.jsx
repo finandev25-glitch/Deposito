@@ -23,6 +23,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
   // Estados para los datos del formulario
   const [formData, setFormData] = useState({
+    cliente: "",
     numero_operacion: "",
     monto: "",
     moneda: "PEN",
@@ -57,6 +58,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   const [croppedImageName, setCroppedImageName] = useState("");
   const [croppedImagePreview, setCroppedImagePreview] = useState("");
   const [croppedImageError, setCroppedImageError] = useState("");
+  const [isExtractingVoucher, setIsExtractingVoucher] = useState(false);
 
   const handleTelefonoSearchPaste = (event) => {
     const pastedText = event.clipboardData.getData("text");
@@ -230,14 +232,12 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
     if (!file.type.startsWith("image/")) {
       setCroppedImageError("Selecciona un archivo de imagen válido.");
-      e.target.value = "";
       return;
     }
 
     const maxSizeBytes = 5 * 1024 * 1024;
     if (file.size > maxSizeBytes) {
       setCroppedImageError("La imagen debe pesar 5 MB o menos.");
-      e.target.value = "";
       return;
     }
 
@@ -287,6 +287,50 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
     setCroppedImageError("");
   };
 
+  const handleExtractVoucherData = async () => {
+    if (!croppedImageDataUrl) {
+      setCroppedImageError("Primero pega una imagen del voucher.");
+      return;
+    }
+
+    setIsExtractingVoucher(true);
+    setCroppedImageError("");
+
+    try {
+      const response = await apiPost("/ai/extract-voucher", {
+        imageDataUrl: croppedImageDataUrl,
+      });
+
+      if (response.error) {
+        throw new Error(response.error);
+      }
+
+      const data = response.data || {};
+      setFormData((prev) => ({
+        ...prev,
+        cliente: data.cliente || prev.cliente,
+        numero_operacion:
+          data.numero_operacion || data.numero_operacion_banco || prev.numero_operacion,
+        numero_operacion_banco:
+          data.numero_operacion_banco || data.numero_operacion || prev.numero_operacion_banco,
+        monto: data.monto || prev.monto,
+        moneda: data.moneda || prev.moneda,
+        fecha_deposito: data.fecha_deposito || prev.fecha_deposito,
+      }));
+      setMessage({
+        type: "success",
+        text: "Datos extraídos automáticamente desde el voucher.",
+      });
+    } catch (error) {
+      console.error("Error extrayendo voucher con IA:", error);
+      setCroppedImageError(
+        error.message || "No se pudieron extraer los datos del voucher.",
+      );
+    } finally {
+      setIsExtractingVoucher(false);
+    }
+  };
+
   const handleSelectTrabajador = (trabajador) => {
     setFormData((prev) => ({
       ...prev,
@@ -304,6 +348,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
     if (!formData.numero_operacion_banco)
       errors.push("Número de operación banco");
+    if (!formData.cliente) errors.push("Cliente");
     if (!formData.monto || parseFloat(formData.monto) <= 0)
       errors.push("Monto válido");
     if (!formData.moneda) errors.push("Moneda");
@@ -327,10 +372,14 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       return;
     }
 
-    // Verificar duplicados antes de guardar
-    const isDuplicateValid = await checkForDuplicates();
-    if (!isDuplicateValid) {
-      return; // No continuar si hay duplicados o error
+    const shouldCheckDuplicates = String(formData.estado || "validado").trim().toLowerCase() === "validado";
+
+    // Solo validar duplicados cuando el depósito se registra como validado
+    if (shouldCheckDuplicates) {
+      const isDuplicateValid = await checkForDuplicates();
+      if (!isDuplicateValid) {
+        return; // No continuar si hay duplicados o error
+      }
     }
 
     setLoading(true);
@@ -338,6 +387,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
     try {
       const depositData = {
+        cliente: formData.cliente,
         numero_operacion: formData.numero_operacion_banco, // Usar numero_operacion_banco para ambos campos
         monto: parseFloat(formData.monto),
         moneda: formData.moneda,
@@ -411,6 +461,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   const resetDepositForm = () => {
       setFormData((prev) => ({
       ...prev,
+      cliente: "",
       numero_operacion: "",
       monto: "",
       fecha_deposito: "",
@@ -428,6 +479,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   // Reset completo de todo el formulario
   const resetForm = () => {
     setFormData({
+      cliente: "",
       numero_operacion: "",
       monto: "",
       moneda: "PEN",
@@ -466,6 +518,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   const resetIdentificationForm = () => {
     setFormData((prev) => ({
       ...prev,
+      cliente: "",
       empresa_id: "",
       anexo: "",
       banco_id: "",
@@ -559,7 +612,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
+    <div className="min-h-screen bg-slate-100 dark:bg-gray-950 p-4">
       <div className="w-full mx-auto">
         {/* Header Compacto */}
         <div className="flex items-center gap-3 mb-4">
@@ -575,10 +628,12 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
         {/* Formulario en 2 Cards */}
         <form onSubmit={handleSubmit}>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mb-3">
-            {/* Card 1: Identificación (Empresa, Trabajador, Anexo) */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-2">
-              <div className="flex items-center justify-between mb-2">
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900/95">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 lg:p-5">
+            <div className="lg:col-span-5 flex flex-col gap-4">
+              {/* Card 1: Identificación (Empresa, Trabajador, Anexo) */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/95 shadow-sm dark:border-gray-700 dark:bg-gray-800/80">
+              <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 dark:border-gray-700">
                 <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
                   <Building2 className="w-4 h-4" />
                   Identificación
@@ -592,7 +647,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                   <X className="w-3 h-3" />
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Empresa *
@@ -658,7 +713,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                   </div>
                 </div>
 
-                <div className="col-span-2">
+                <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Banco (auto)
                   </label>
@@ -674,7 +729,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                   />
                 </div>
 
-                <div className="col-span-2">
+                <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     <Search className="inline w-4 h-4 mr-1" />
                     Trabajador
@@ -722,7 +777,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                 </div>
 
                 {trabajadorSeleccionado && (
-                  <div className="col-span-2">
+                  <div className="md:col-span-2">
                     <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded">
                       <div className="flex items-center justify-between gap-1">
                         <div className="flex-1 min-w-0">
@@ -764,13 +819,30 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
             </div>
 
             {/* Card 2: Datos del Voucher */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-2">
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-1">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/95 shadow-sm dark:border-gray-700 dark:bg-gray-800/80">
+              <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 dark:border-gray-700">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-1">
                 <FileText className="w-4 h-4" />
                 Datos del Voucher
               </h3>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-3">
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Cliente *
+                  </label>
+                  <input
+                    type="text"
+                    name="cliente"
+                    value={formData.cliente}
+                    onChange={handleChange}
+                    placeholder="Nombre del cliente"
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-purple-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    required
+                  />
+                </div>
+
+                <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Nro. Operación Banco *
                   </label>
@@ -861,57 +933,108 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                   </select>
                 </div>
 
-                <div className="col-span-3">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Pegar imagen recortada (opcional)
-                  </label>
-                  <div className="flex flex-col gap-2">
-                    <div
-                      tabIndex={0}
-                      onPaste={handleCroppedImagePaste}
-                      onClick={(e) => e.currentTarget.focus()}
-                      className="rounded-lg border border-dashed border-purple-300 bg-purple-50 px-3 py-3 text-sm text-gray-700 outline-none transition-colors hover:bg-purple-100 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 dark:border-purple-700 dark:bg-purple-900/20 dark:text-gray-200 dark:hover:bg-purple-900/30"
-                    >
-                      <div className="font-medium text-purple-700 dark:text-purple-300">
-                        Haz clic aquí y pega la imagen con Ctrl+V
-                      </div>
-                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        No uses ruta ni URL. Pega directamente la imagen recortada desde el portapapeles.
-                      </div>
-                    </div>
+              </div>
+            </div>
 
-                    {croppedImageError && (
-                      <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
-                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-                        <span>{croppedImageError}</span>
-                      </div>
-                    )}
-                    {croppedImagePreview && (
-                      <div className="flex items-start gap-3 rounded border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-900/40">
+            </div>
+
+            <div className="lg:col-span-7">
+              <div className="h-full rounded-xl border border-slate-200 bg-slate-50/95 shadow-sm dark:border-gray-700 dark:bg-gray-800/80">
+                <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 dark:border-gray-700">
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-1">
+                    <FileText className="w-4 h-4" />
+                    Voucher y extracción
+                  </h3>
+                  {croppedImagePreview && (
+                    <button
+                      type="button"
+                      onClick={clearCroppedImage}
+                      className="text-xs px-2 py-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                      title="Limpiar imagen"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-3 p-3">
+                  <div
+                    tabIndex={0}
+                    onPaste={handleCroppedImagePaste}
+                    onClick={(e) => e.currentTarget.focus()}
+                    className="flex min-h-[32rem] cursor-text flex-col overflow-hidden rounded-xl border border-slate-200 bg-white outline-none transition-colors hover:border-purple-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 dark:border-gray-700 dark:bg-gray-950/50 dark:hover:border-purple-500"
+                  >
+                    <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-purple-700 dark:border-gray-700 dark:text-purple-300">
+                      Haz clic aquí y pega la imagen con Ctrl+V
+                    </div>
+                    <div className="flex min-h-0 flex-1 items-center justify-center bg-gradient-to-b from-white to-slate-50 p-3 dark:from-gray-950 dark:to-gray-900">
+                      {croppedImagePreview ? (
                         <img
                           src={croppedImagePreview}
                           alt="Vista previa de la imagen pegada"
-                          className="h-20 w-20 rounded object-cover border border-gray-200 dark:border-gray-700"
+                          className="max-h-[28rem] max-w-full rounded-lg object-contain shadow-sm"
                         />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      ) : (
+                        <div className="max-w-md text-center text-sm text-gray-500 dark:text-gray-400">
+                          Pega aquí la captura del voucher. Luego usa el botón de extracción para completar los datos automáticamente.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {croppedImagePreview && (
+                    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900/50">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-200">
+                          <FileText className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">
                             {croppedImageName || "imagen_pegada"}
                           </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            Lista para subir al storage.
+                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Lista para subir al storage y extraer datos con IA.
                           </div>
                         </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleExtractVoucherData}
+                          disabled={isExtractingVoucher}
+                          className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isExtractingVoucher ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Extrayendo...
+                            </>
+                          ) : (
+                            <>
+                              <Search className="h-4 w-4" />
+                              Extraer datos con IA
+                            </>
+                          )}
+                        </button>
                         <button
                           type="button"
                           onClick={clearCroppedImage}
-                          className="rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
-                          title="Quitar imagen"
+                          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
                         >
-                          <X className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
+                          Limpiar imagen
                         </button>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
+
+                  {croppedImageError && (
+                    <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                      <span>{croppedImageError}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -993,7 +1116,9 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                 disabled={
                   loading ||
                   isChecking ||
-                  (checkResult.checked && checkResult.isDuplicate)
+                  (String(formData.estado || "validado").trim().toLowerCase() === "validado" &&
+                    checkResult.checked &&
+                    checkResult.isDuplicate)
                 }
                 className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-1 px-4 rounded transition-colors flex items-center justify-center gap-1 text-sm"
               >
@@ -1015,6 +1140,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                 )}
               </button>
             </div>
+          </div>
           </div>
         </form>
 

@@ -945,6 +945,165 @@ function getEnv(name) {
   return process.env[name] || process.env[`VITE_${name}`];
 }
 
+function normalizeOpenAIExtractedText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeOpenAIMoney(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const cleaned = raw.replace(/[^\d,.-]/g, "");
+  if (!cleaned) return "";
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else {
+    normalized = cleaned.replace(/,/g, "");
+  }
+
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? "" : String(parsed);
+}
+
+function normalizeOpenAIDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split("/");
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeOpenAIMoneda(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw.includes("USD") || raw.includes("$") || raw.includes("DOLAR") || raw.includes("DÓLAR")) {
+    return "USD";
+  }
+  if (raw.includes("PEN") || raw.includes("SOL") || raw.includes("S/")) {
+    return "PEN";
+  }
+  return "";
+}
+
+async function extractVoucherDataWithOpenAI(dataUrl) {
+  const apiKey = getEnv("OPENAI_API_KEY");
+  const model = getEnv("OPENAI_VOUCHER_MODEL") || "gpt-4o-mini";
+
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY no está configurada en el backend");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_completion_tokens: 400,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "voucher_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              cliente: { type: "string" },
+              numero_operacion: { type: "string" },
+              numero_operacion_banco: { type: "string" },
+              monto: { type: "string" },
+              moneda: { type: "string" },
+              fecha_deposito: { type: "string" },
+            },
+            required: [
+              "cliente",
+              "numero_operacion",
+              "numero_operacion_banco",
+              "monto",
+              "moneda",
+              "fecha_deposito",
+            ],
+          },
+        },
+      },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Eres un extractor de datos de vouchers bancarios. Devuelve solo JSON válido con los campos solicitados. Si un dato no aparece con claridad, devuelve una cadena vacía. No inventes información.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extrae del voucher los campos cliente, numero_operacion, numero_operacion_banco, monto, moneda y fecha_deposito. Usa fecha_deposito en formato YYYY-MM-DD.",
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: dataUrl,
+                detail: "high",
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  const rawText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI error ${response.status}: ${rawText}`);
+  }
+
+  const payload = JSON.parse(rawText);
+  const content = payload?.choices?.[0]?.message?.content || "";
+  if (!content) {
+    throw new Error("OpenAI no devolvió contenido para la extracción");
+  }
+
+  const extracted = JSON.parse(content);
+  const cliente = normalizeOpenAIExtractedText(extracted.cliente);
+  const numeroOperacion = normalizeOpenAIExtractedText(extracted.numero_operacion).replace(/\D/g, "");
+  const numeroOperacionBanco = normalizeOpenAIExtractedText(extracted.numero_operacion_banco).replace(/\D/g, "") || numeroOperacion;
+  const monto = normalizeOpenAIMoney(extracted.monto);
+  const moneda = normalizeOpenAIMoneda(extracted.moneda);
+  const fechaDeposito = normalizeOpenAIDate(extracted.fecha_deposito);
+
+  return {
+    cliente,
+    numero_operacion: numeroOperacion,
+    numero_operacion_banco: numeroOperacionBanco,
+    monto,
+    moneda,
+    fecha_deposito: fechaDeposito,
+  };
+}
+
 function getSupabaseClient() {
   if (supabaseClient) return supabaseClient;
 
@@ -1302,12 +1461,12 @@ async function syncAutomaticSupportAlert() {
       "depositos.automatic_alert.recent_inserts",
       { sinceIso, untilIso: nowIso },
       () =>
-          client
+        client
           .from("depositos")
-          .select("id, estado, created_at, fecha_registro")
-          .gt("created_at", sinceIso)
-          .lte("created_at", nowIso)
-          .order("created_at", { ascending: true })
+          .select("id, estado, fecha_registro")
+          .gte("fecha_registro", sinceIso)
+          .lte("fecha_registro", nowIso)
+          .order("fecha_registro", { ascending: true })
           .order("id", { ascending: true })
     );
 
@@ -4834,6 +4993,23 @@ function registerJsonRoutes(app) {
     }
   });
 
+  app.post("/api/ai/extract-voucher", async (req, res) => {
+    try {
+      const { imageDataUrl } = req.body || {};
+      if (!imageDataUrl) {
+        return res.status(400).json({ error: "imageDataUrl es requerido" });
+      }
+
+      const extracted = await extractVoucherDataWithOpenAI(imageDataUrl);
+      res.json({ data: extracted });
+    } catch (error) {
+      console.error("[API] ERROR /api/ai/extract-voucher", {
+        message: error.message,
+      });
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/reportes/summary", async (req, res) => {
     try {
       const client = getSupabaseAdminClient();
@@ -5836,12 +6012,14 @@ function handleRealtimeWorkerMessage(message) {
 }
 
 export function startDepositRealtimeHub() {
+  loadLocalEnv();
+
   if (realtimeWorker?.connected) {
     return true;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl = getEnv("SUPABASE_URL");
+  const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
     console.warn(
       "Backend realtime desactivado: faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY"
