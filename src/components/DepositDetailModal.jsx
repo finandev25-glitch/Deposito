@@ -4295,7 +4295,7 @@ Gracias por su comprensión.`;
                     (displayVoucherUrl.includes(".pdf") ||
                       displayVoucherUrl.includes("/preview")) ? (
                       <div
-                        className="w-full h-full flex flex-col"
+                        className="flex h-full w-full flex-col overflow-hidden rounded-md"
                         style={{
                           minHeight: "calc(93vh - 150px)",
                           height: "calc(93vh - 150px)",
@@ -4319,7 +4319,7 @@ Gracias por su comprensión.`;
                         <iframe
                           id="pdf-iframe-detail"
                           src={`${displayVoucherUrl}#toolbar=1&navpanes=1&scrollbar=1&view=Fit`}
-                          className="w-full flex-1 rounded-b pointer-events-none lg:pointer-events-auto"
+                          className="w-full flex-1 pointer-events-none lg:pointer-events-auto"
                           title="Voucher"
                           style={{
                             border: "none",
@@ -4329,14 +4329,16 @@ Gracias por su comprensión.`;
                         />
                       </div>
                     ) : (
-                      <img
-                        src={
-                          displayVoucherUrl ||
-                          FALLBACK_VOUCHER_PREVIEW
-                        }
-                        alt={`Voucher ${deposit.numero_voucher}`}
-                        className="w-full h-full object-contain rounded-md pointer-events-none lg:pointer-events-auto"
-                      />
+                      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-black/5 dark:bg-black/20">
+                        <img
+                          src={
+                            displayVoucherUrl ||
+                            FALLBACK_VOUCHER_PREVIEW
+                          }
+                          alt={`Voucher ${deposit.numero_voucher}`}
+                          className="max-h-full max-w-full object-contain pointer-events-none lg:pointer-events-auto"
+                        />
+                      </div>
                     )}
                   </div>
                 </div>

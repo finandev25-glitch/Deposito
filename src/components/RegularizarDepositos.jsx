@@ -27,7 +27,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
     monto: "",
     moneda: "PEN",
     fecha_deposito: "",
-    estado: "validado",
+    estado: "pendiente",
     anexo: "",
     numero_operacion_banco: "",
     empresa_id: "",
@@ -57,6 +57,27 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   const [croppedImageName, setCroppedImageName] = useState("");
   const [croppedImagePreview, setCroppedImagePreview] = useState("");
   const [croppedImageError, setCroppedImageError] = useState("");
+
+  const handleTelefonoSearchPaste = (event) => {
+    const pastedText = event.clipboardData.getData("text");
+    if (!pastedText) return;
+
+    const cleanedText = pastedText.replace(/\s+/g, "");
+    if (cleanedText === pastedText) return;
+
+    event.preventDefault();
+
+    const input = event.currentTarget;
+    const start = input.selectionStart ?? telefonoSearch.length;
+    const end = input.selectionEnd ?? telefonoSearch.length;
+    const nextValue =
+      telefonoSearch.slice(0, start) + cleanedText + telefonoSearch.slice(end);
+
+    setTelefonoSearch(nextValue);
+    if (nextValue === "") {
+      setTrabajadorSeleccionado(null);
+    }
+  };
 
   // Estados para tabla de depósitos regularizados
   const [depositosRegularizados, setDepositosRegularizados] = useState([]);
@@ -393,7 +414,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       numero_operacion: "",
       monto: "",
       fecha_deposito: "",
-      estado: "validado",
+      estado: "pendiente",
       numero_operacion_banco: "",
       telefono_origen: "",
     }));
@@ -411,7 +432,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       monto: "",
       moneda: "PEN",
       fecha_deposito: "",
-      estado: "validado",
+      estado: "pendiente",
       anexo: "",
       numero_operacion_banco: "",
       empresa_id: "",
@@ -450,7 +471,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       banco_id: "",
       sucursal_id: "",
       trabajador_sucursal_id: "",
-      estado: "validado",
+      estado: "pendiente",
     }));
     setTrabajadorSeleccionado(null);
     setTelefonoSearch("");
@@ -668,6 +689,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                           setTrabajadorSeleccionado(null);
                         }
                       }}
+                      onPaste={handleTelefonoSearchPaste}
                       className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-purple-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                       placeholder="Nombre o teléfono..."
                     />

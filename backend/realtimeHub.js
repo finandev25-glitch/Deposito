@@ -186,6 +186,57 @@ function sanitizeFilenamePart(value, fallback = "voucher") {
   return sanitized || fallback;
 }
 
+function parseDataUrlImage(dataUrl) {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) return null;
+
+  const mimeType = match[1] || "image/png";
+  const base64 = match[2] || "";
+  if (!base64) return null;
+
+  return {
+    mimeType,
+    buffer: Buffer.from(base64, "base64"),
+    extension: guessExtensionFromMimeType(mimeType, "png"),
+  };
+}
+
+async function uploadDepositCroppedImageToStorage(
+  client,
+  dataUrl,
+  { depositId = "", numeroOperacion = "", fileName = "" } = {},
+) {
+  const parsed = parseDataUrlImage(dataUrl);
+  if (!client || !parsed?.buffer?.length) return null;
+
+  const baseName = sanitizeFilenamePart(
+    fileName || numeroOperacion || depositId || "imagen_recortada",
+    "imagen_recortada",
+  );
+  const storagePath = `depositos-regularizados/${Date.now()}-${baseName}.${parsed.extension}`;
+
+  const { error: uploadError } = await client.storage.from(WHATSAPP_MEDIA_BUCKET).upload(storagePath, parsed.buffer, {
+    contentType: parsed.mimeType,
+    upsert: true,
+  });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data: publicUrlData } = client.storage.from(WHATSAPP_MEDIA_BUCKET).getPublicUrl(storagePath);
+
+  return {
+    bucket: WHATSAPP_MEDIA_BUCKET,
+    path: storagePath,
+    publicUrl: publicUrlData?.publicUrl || null,
+    contentType: parsed.mimeType,
+  };
+}
+
 function formatDateForDisplay(value) {
   if (!value) return "";
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -3996,31 +4047,38 @@ function registerJsonRoutes(app) {
         });
       }
 
+      const duplicateCheckQuery = client
+        .from("depositos")
+        .select(
+          `
+          id,
+          numero_operacion_banco,
+          monto,
+          moneda,
+          fecha_deposito,
+          fecha_registro,
+          estado,
+          sucursal:sucursal_id(nombre),
+          trabajador:trabajador_sucursal_id(nombre),
+          empresa:empresa_id(nombre),
+          banco:banco_id(nombre, abreviatura)
+        `
+        )
+        .eq("monto", monto)
+        .eq("moneda", moneda)
+        .eq("estado", "validado");
+
+      const normalizedExcludeId =
+        typeof excludeId === "string" && excludeId.trim() ? excludeId.trim() : null;
+
+      if (normalizedExcludeId) {
+        duplicateCheckQuery.neq("id", normalizedExcludeId);
+      }
+
       const { data, error } = await runLoggedQuery(
         "depositos.duplicateCheck",
-        { monto, moneda, numero_operacion_banco, excludeId },
-        () =>
-          client
-            .from("depositos")
-            .select(
-              `
-              id,
-              numero_operacion_banco,
-              monto,
-              moneda,
-              fecha_deposito,
-              fecha_registro,
-              estado,
-              sucursal:sucursal_id(nombre),
-              trabajador:trabajador_sucursal_id(nombre),
-              empresa:empresa_id(nombre),
-              banco:banco_id(nombre, abreviatura)
-            `
-            )
-            .eq("monto", monto)
-            .eq("moneda", moneda)
-            .eq("estado", "validado")
-            .neq("id", excludeId)
+        { monto, moneda, numero_operacion_banco, excludeId: normalizedExcludeId },
+        () => duplicateCheckQuery
       );
 
       if (error) throw error;
@@ -4730,17 +4788,36 @@ function registerJsonRoutes(app) {
   app.post("/api/depositos", async (req, res) => {
     try {
       const client = getSupabaseAdminClient();
+      const body = req.body || {};
+      const {
+        imagen_recortada_data_url,
+        imagen_recortada_name,
+        ...depositPayload
+      } = body;
+
+      if (imagen_recortada_data_url) {
+        const uploadedImage = await uploadDepositCroppedImageToStorage(client, imagen_recortada_data_url, {
+          depositId: depositPayload?.id || "",
+          numeroOperacion: depositPayload?.numero_operacion_banco || depositPayload?.numero_operacion || "",
+          fileName: imagen_recortada_name || "imagen_recortada",
+        });
+
+        if (uploadedImage?.publicUrl) {
+          depositPayload.imagen_voucher = uploadedImage.publicUrl;
+        }
+      }
+
       const { data, error } = await runLoggedQuery(
         "depositos.create",
-        { keys: Object.keys(req.body || {}) },
+        { keys: Object.keys(depositPayload || {}) },
         () =>
           client
             .from("depositos")
-            .insert(req.body || {})
+            .insert(depositPayload || {})
             .select(
               `id, numero_operacion, cliente, monto, fecha_registro, fecha_solo_date, imagen_voucher, anexo, numero_operacion_banco, fecha_deposito, estado, observaciones, motivo_rechazo, fecha_validacion, referencia_cliente, validado_por, moneda, ruc_cliente, telefono_origen, chatwoot_message_id, es_antiguo,
-  empresa:empresa_id (id, nombre, estado, abreviatura),
-  banco:banco_id (id, abreviatura, estado),
+   empresa:empresa_id (id, nombre, estado, abreviatura),
+   banco:banco_id (id, abreviatura, estado),
   sucursal:sucursal_id (id, nombre),
   trabajador:trabajador_sucursal_id (id, nombre, telefono_origen),
   validado_por_usuario:validado_por (id, nombre)`
