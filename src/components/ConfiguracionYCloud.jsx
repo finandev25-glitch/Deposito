@@ -20,6 +20,20 @@ import {
 } from "lucide-react";
 
 const ConfiguracionYCloud = () => {
+  const normalizeYCloudPhoneNumber = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+
+    let cleaned = raw.replace(/[\s\-\(\)]/g, "");
+    if (cleaned.startsWith("00")) {
+      cleaned = `+${cleaned.slice(2)}`;
+    } else if (!cleaned.startsWith("+")) {
+      cleaned = `+${cleaned.replace(/[^\d]/g, "")}`;
+    }
+
+    return cleaned;
+  };
+
   const [configs, setConfigs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -192,7 +206,7 @@ Ejemplo: +521234567890`
         api_key: formData.api_key.trim(),
         waba_id: formData.waba_id?.trim() || null,
         phone_number_id: formData.phone_number_id?.trim() || null,
-        default_from_number: formData.default_from_number.trim(),
+        default_from_number: normalizeYCloudPhoneNumber(formData.default_from_number),
         activo: formData.activo,
       };
 

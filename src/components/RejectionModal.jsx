@@ -3,7 +3,11 @@ import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X, MessageSquareWarning, Loader2 } from "lucide-react";
 
-const RejectionModal = ({ onClose, onConfirm, initialReason = "" }) => {
+const RejectionModal = ({
+  onClose,
+  onConfirm,
+  initialReason = "",
+}) => {
   const [reason, setReason] = useState(initialReason);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -22,6 +26,7 @@ const RejectionModal = ({ onClose, onConfirm, initialReason = "" }) => {
     } catch (error) {
       console.error("Error al rechazar:", error);
       setError("Error al procesar el rechazo. Inténtelo de nuevo.");
+    } finally {
       setIsSubmitting(false);
     }
     // El setIsSubmitting(false) se maneja en el componente padre

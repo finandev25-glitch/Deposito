@@ -7,20 +7,11 @@ import {
   CheckCircle,
   Loader2,
   X,
-  Calendar,
   Building2,
-  CreditCard,
   User,
   Phone,
-  Hash,
-  DollarSign,
   Search,
   Trash2,
-  ChevronDown,
-  ChevronRight,
-  Image,
-  File,
-  ExternalLink,
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext";
 import { formatDate } from "../utils/dateFormatters";
@@ -36,6 +27,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
     monto: "",
     moneda: "PEN",
     fecha_deposito: "",
+    estado: "validado",
     anexo: "",
     numero_operacion_banco: "",
     empresa_id: "",
@@ -61,6 +53,10 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
   const [message, setMessage] = useState({ type: "", text: "" });
   const [filteredCuentas, setFilteredCuentas] = useState([]);
   const [anexoSearch, setAnexoSearch] = useState("");
+  const [croppedImageDataUrl, setCroppedImageDataUrl] = useState("");
+  const [croppedImageName, setCroppedImageName] = useState("");
+  const [croppedImagePreview, setCroppedImagePreview] = useState("");
+  const [croppedImageError, setCroppedImageError] = useState("");
 
   // Estados para tabla de depósitos regularizados
   const [depositosRegularizados, setDepositosRegularizados] = useState([]);
@@ -205,6 +201,71 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  const loadCroppedImageFile = (file, fallbackName = "imagen_recortada") => {
+    if (!file) {
+      clearCroppedImage();
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setCroppedImageError("Selecciona un archivo de imagen válido.");
+      e.target.value = "";
+      return;
+    }
+
+    const maxSizeBytes = 5 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setCroppedImageError("La imagen debe pesar 5 MB o menos.");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setCroppedImageDataUrl(dataUrl);
+      setCroppedImagePreview(dataUrl);
+      setCroppedImageName(file.name || fallbackName);
+      setCroppedImageError("");
+    };
+    reader.onerror = () => {
+      setCroppedImageError("No se pudo leer la imagen seleccionada.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCroppedImagePaste = (e) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageItem = items.find((item) => item.kind === "file" && item.type.startsWith("image/"));
+
+    if (!imageItem) {
+      setCroppedImageError("Pega una imagen desde el portapapeles.");
+      return;
+    }
+
+    const file = imageItem.getAsFile();
+    if (!file) {
+      setCroppedImageError("No se pudo leer la imagen pegada.");
+      return;
+    }
+
+    e.preventDefault();
+    loadCroppedImageFile(file, "imagen_pegada");
+  };
+
+  const handleCroppedImageChange = (e) => {
+    const file = e.target.files?.[0] || null;
+    loadCroppedImageFile(file, "imagen_recortada");
+    e.target.value = "";
+  };
+
+  const clearCroppedImage = () => {
+    setCroppedImageDataUrl("");
+    setCroppedImageName("");
+    setCroppedImagePreview("");
+    setCroppedImageError("");
+  };
+
   const handleSelectTrabajador = (trabajador) => {
     setFormData((prev) => ({
       ...prev,
@@ -270,11 +331,16 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
           : null,
         telefono_origen: formData.telefono_origen || null,
         observaciones: "**registros manual**",
-        estado: "validado",
+        estado: formData.estado || "validado",
         validado_por: currentUser.id,
         fecha_validacion: new Date().toISOString(),
         fecha_registro: new Date().toISOString(),
       };
+
+      if (croppedImageDataUrl) {
+        depositData.imagen_recortada_data_url = croppedImageDataUrl;
+        depositData.imagen_recortada_name = croppedImageName || "imagen_recortada";
+      }
 
       const response = await apiPost("/depositos", depositData);
       if (response.error) throw new Error(response.error);
@@ -283,6 +349,10 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
         type: "success",
         text: `Depósito regularizado exitosamente`,
       });
+
+      if (typeof onDepositUpdated === "function") {
+        onDepositUpdated();
+      }
 
       // Recargar tabla y limpiar solo datos de depósito
       setTimeout(() => {
@@ -318,14 +388,16 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
 
   // Reset parcial que mantiene datos de identificación
   const resetDepositForm = () => {
-    setFormData((prev) => ({
+      setFormData((prev) => ({
       ...prev,
       numero_operacion: "",
       monto: "",
       fecha_deposito: "",
+      estado: "validado",
       numero_operacion_banco: "",
       telefono_origen: "",
     }));
+    clearCroppedImage();
     setTelefonoSearch("");
     setTrabajadoresEncontrados([]);
     setTrabajadorSeleccionado(null);
@@ -339,6 +411,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       monto: "",
       moneda: "PEN",
       fecha_deposito: "",
+      estado: "validado",
       anexo: "",
       numero_operacion_banco: "",
       empresa_id: "",
@@ -351,6 +424,7 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
     setTrabajadoresEncontrados([]);
     setTrabajadorSeleccionado(null);
     setAnexoSearch("");
+    clearCroppedImage();
     setMessage({ type: "", text: "" });
   };
 
@@ -376,11 +450,13 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
       banco_id: "",
       sucursal_id: "",
       trabajador_sucursal_id: "",
+      estado: "validado",
     }));
     setTrabajadorSeleccionado(null);
     setTelefonoSearch("");
     setTrabajadoresEncontrados([]);
     setAnexoSearch("");
+    clearCroppedImage();
   };
 
   // Verificación de duplicados antes de guardar
@@ -744,6 +820,75 @@ const RegularizarDepositos = ({ onDepositUpdated }) => {
                     >
                       Hoy
                     </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Estado *
+                  </label>
+                  <select
+                    name="estado"
+                    value={formData.estado}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-purple-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    required
+                  >
+                    <option value="validado">Validado</option>
+                    <option value="pendiente">Pendiente</option>
+                  </select>
+                </div>
+
+                <div className="col-span-3">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Pegar imagen recortada (opcional)
+                  </label>
+                  <div className="flex flex-col gap-2">
+                    <div
+                      tabIndex={0}
+                      onPaste={handleCroppedImagePaste}
+                      onClick={(e) => e.currentTarget.focus()}
+                      className="rounded-lg border border-dashed border-purple-300 bg-purple-50 px-3 py-3 text-sm text-gray-700 outline-none transition-colors hover:bg-purple-100 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 dark:border-purple-700 dark:bg-purple-900/20 dark:text-gray-200 dark:hover:bg-purple-900/30"
+                    >
+                      <div className="font-medium text-purple-700 dark:text-purple-300">
+                        Haz clic aquí y pega la imagen con Ctrl+V
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        No uses ruta ni URL. Pega directamente la imagen recortada desde el portapapeles.
+                      </div>
+                    </div>
+
+                    {croppedImageError && (
+                      <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                        <span>{croppedImageError}</span>
+                      </div>
+                    )}
+                    {croppedImagePreview && (
+                      <div className="flex items-start gap-3 rounded border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-900/40">
+                        <img
+                          src={croppedImagePreview}
+                          alt="Vista previa de la imagen pegada"
+                          className="h-20 w-20 rounded object-cover border border-gray-200 dark:border-gray-700"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                            {croppedImageName || "imagen_pegada"}
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            Lista para subir al storage.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={clearCroppedImage}
+                          className="rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                          title="Quitar imagen"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

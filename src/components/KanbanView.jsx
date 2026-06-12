@@ -16,6 +16,8 @@ import {
   ChevronDown,
   Calendar,
   MessageCircle,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { toLocalISOString } from "../utils/dateFormatters";
@@ -136,7 +138,28 @@ const KanbanView = ({
   // Estado para modal de contactos
   const [showContactosModal, setShowContactosModal] = useState(false);
   const [selectedValidatorFilter, setSelectedValidatorFilter] = useState(null);
+  const [replyToWhatsAppMessages, setReplyToWhatsAppMessages] = useState(() => {
+    try {
+      const storedValue = localStorage.getItem("kanban_reply_to_whatsapp");
+      if (storedValue === "off") return false;
+      if (storedValue === "on") return true;
+      return true;
+    } catch {
+      return true;
+    }
+  });
   const isCompactKanban = detailPresentationMode === "compact";
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "kanban_reply_to_whatsapp",
+        replyToWhatsAppMessages ? "on" : "off",
+      );
+    } catch {
+      // ignore storage failures
+    }
+  }, [replyToWhatsAppMessages]);
 
   const getUserInitials = useCallback((name) => {
     const cleanName = String(name || "").trim();
@@ -711,6 +734,30 @@ const KanbanView = ({
                   />
                 </div>
               )}
+
+              <button
+                type="button"
+                onClick={() => setReplyToWhatsAppMessages((prev) => !prev)}
+                className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm transition-colors ${
+                  replyToWhatsAppMessages
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-gray-900 dark:text-slate-200 dark:hover:bg-gray-800"
+                }`}
+                title={
+                  replyToWhatsAppMessages
+                    ? "Responder a mensajes de WhatsApp cuando sea posible"
+                    : "Enviar mensajes nuevos en lugar de responder al hilo"
+                }
+              >
+                {replyToWhatsAppMessages ? (
+                  <ToggleRight className="h-5 w-5" />
+                ) : (
+                  <ToggleLeft className="h-5 w-5" />
+                )}
+                <span className="hidden sm:inline">
+                  {replyToWhatsAppMessages ? "Responder On" : "Responder Off"}
+                </span>
+              </button>
 
               <button
                 onClick={() => setShowContactosModal(true)}
@@ -1292,14 +1339,15 @@ const KanbanView = ({
           <DepositDetailModal
             deposit={selectedDeposit}
             onClose={handleCloseModal}
-          onUpdateDeposit={onUpdateDeposit}
-          empresas={empresas}
-          bancos={bancos}
-          cuentas={cuentas}
-          onOpenVoucherWindow={onOpenVoucherWindow}
-          presentationMode={detailPresentationMode}
-        />
-      )}
+            onUpdateDeposit={onUpdateDeposit}
+            empresas={empresas}
+            bancos={bancos}
+            cuentas={cuentas}
+            onOpenVoucherWindow={onOpenVoucherWindow}
+            presentationMode={detailPresentationMode}
+            replyToWhatsAppMessages={replyToWhatsAppMessages}
+          />
+        )}
         {showContactosModal && (
           <ContactosModal onClose={() => setShowContactosModal(false)} />
         )}

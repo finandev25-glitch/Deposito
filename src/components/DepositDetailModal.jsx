@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useState,
   useEffect,
   useContext,
@@ -36,7 +36,6 @@ import {
   Eye,
   AlertTriangle,
   Phone,
-  ExternalLink,
   FileDown,
 } from "lucide-react";
 import RejectionModal from "./RejectionModal";
@@ -371,6 +370,7 @@ const DepositDetailModal = ({
   onOpenVoucherWindow,
   editMode = "full",
   presentationMode = "default",
+  replyToWhatsAppMessages = false,
 }) => {
   const isCompactPresentation = presentationMode === "compact";
   const shouldUseDuplicateModals = isCompactPresentation;
@@ -523,6 +523,53 @@ const DepositDetailModal = ({
     return cleaned;
   };
 
+  const formatPhoneForYCloud = (phone) => {
+    const formatted = formatPhoneForWhatsApp(phone);
+    if (!formatted) return "";
+    return formatted.startsWith("+") ? formatted : `+${formatted}`;
+  };
+
+  const buildWhatsAppMessageLink = (phone, message) => {
+    const formattedPhone = formatPhoneForWhatsApp(phone);
+    if (!formattedPhone || !message) return "";
+    return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+  };
+
+  const openWhatsAppMessageLink = (phone, message, contextLabel = "mensaje") => {
+    const link = buildWhatsAppMessageLink(phone, message);
+    if (!link) {
+      alert(`No hay número de teléfono disponible para abrir WhatsApp ${contextLabel}.`);
+      return false;
+    }
+
+    window.open(link, "_blank", "noopener,noreferrer");
+    return true;
+  };
+
+  const buildYCloudReplyOptions = useCallback(
+    (replyMessageId) => {
+      if (!replyToWhatsAppMessages || !replyMessageId) {
+        return {};
+      }
+
+      return {
+        context: { message_id: replyMessageId },
+        replyToMessageId: replyMessageId,
+      };
+    },
+    [replyToWhatsAppMessages],
+  );
+
+  const buildYCloudMessagePayload = useCallback(
+    ({ configId, to, text, replyMessageId }) => ({
+      configId,
+      to,
+      text,
+      ...buildYCloudReplyOptions(replyMessageId),
+    }),
+    [buildYCloudReplyOptions],
+  );
+
   // Función para abrir WhatsApp Web
   const openWhatsAppChat = () => {
     const telefono =
@@ -534,6 +581,35 @@ const DepositDetailModal = ({
     }
     window.open(`https://wa.me/${formattedPhone}`, "_blank");
   };
+
+  const buildConfirmationMessage = ({ empresa, banco, fechaDeposito, operacion, moneda, monto }) => {
+    const formatearFechaDeposito = (fechaString) => {
+      if (!fechaString) return "-";
+      const [year, month, day] = String(fechaString).split("T")[0].split("-");
+      return `${day}/${month}/${year}`;
+    };
+
+    return `🎉 *DEPÓSITO CONFIRMADO*
+
+✅ *Empresa:* ${empresa?.nombre || "-"}
+📍 *Sucursal:* ${deposit.sucursal?.nombre || "-"}
+🏦 *Banco:* ${banco?.nombre || "-"}
+🔢 *Anexo:* ${editableData.anexo}
+📅 *Fecha Depósito:* ${formatearFechaDeposito(fechaDeposito)}
+🆔 *Operación:* ${operacion || deposit.numero_operacion || "-"}
+💰 *Importe:* ${moneda || editableData.moneda || "-"} ${Number(monto || editableData.monto || 0).toFixed(2)}
+
+El depósito ha sido validado y confirmado exitosamente.
+
+_Mensaje automático del sistema de control de depósitos_`;
+  };
+
+  const buildRejectionMessage = (reason) => `❌ *DEPÓSITO RECHAZADO*
+
+⚠️ *Su depósito no ha sido aprobado*
+
+📝 *Motivo del rechazo:*
+${reason}`;
 
   const getConversationPhoneNumber = useCallback(() => {
     return (
@@ -1640,18 +1716,7 @@ Gracias por su comprensión.`;
             deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
 
           if (telefonoContacto) {
-            // Formatear el número de teléfono para WhatsApp
-            const formatPhoneNumber = (phone) => {
-              let cleaned = phone.replace(/[\s\-\(\)]/g, "");
-              if (cleaned.startsWith("+")) return cleaned;
-              if (cleaned.startsWith("51") && cleaned.length >= 11)
-                return "+" + cleaned;
-              if (cleaned.length === 9 && cleaned.startsWith("9"))
-                return "+51" + cleaned;
-              return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
-            };
-
-            const telefonoFormateado = formatPhoneNumber(telefonoContacto);
+            const telefonoFormateado = formatPhoneForYCloud(telefonoContacto);
 
             const replyMessageId = getReplyMessageIdFromDeposit(deposit);
 
@@ -1703,11 +1768,15 @@ Gracias por su comprensión.`;
   };
 
   const handleConfirmRejection = async (reason) => {
+    return handleConfirmRejectionWithMode(reason, "ycloud");
+  };
+
+  const handleConfirmRejectionWithMode = async (reason, mode = "ycloud") => {
     if (isProcessing) return; // Evitar múltiples clics
 
     setIsProcessing(true);
     console.log(
-      "❌ Rechazando depósito - NO se requiere validación de campos",
+      `❌ Rechazando depósito (${mode === "link" ? "link" : "YCloud"}) - NO se requiere validación de campos`,
       {
         depositId: deposit.id,
         motivo: reason,
@@ -1724,55 +1793,51 @@ Gracias por su comprensión.`;
       fecha_validacion: new Date().toISOString(),
     };
 
-    // Enviar mensaje de rechazo si hay configuración
-    if (yCloudConfigId) {
+    const telefonoContacto =
+      deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
+    const mensajeRechazo = buildRejectionMessage(reason);
+
+    // Enviar mensaje de rechazo si hay configuración o abrir link de WhatsApp
+    if (mode === "link") {
+      const linkOpened = openWhatsAppMessageLink(
+        telefonoContacto,
+        mensajeRechazo,
+        "del rechazo",
+      );
+
+      if (linkOpened) {
+        console.log("✅ Link de WhatsApp preparado para rechazo");
+        alert(`✅ Depósito rechazado. Se abrió WhatsApp con el mensaje listo:\n\n${mensajeRechazo}`);
+      } else {
+        console.warn("⚠️ No se pudo abrir WhatsApp para el rechazo");
+        alert(
+          "⚠️ Depósito rechazado, pero no se pudo abrir WhatsApp (sin teléfono).",
+        );
+      }
+    } else if (yCloudConfigId) {
       try {
-        const mensajeRechazo = `❌ *DEPÓSITO RECHAZADO*
-
-⚠️ *Su depósito no ha sido aprobado*
-
-📝 *Motivo del rechazo:*
-${reason}`;
-
         console.log("📱 Enviando rechazo:", {
           configId: yCloudConfigId,
         });
 
-        // Obtener teléfono del trabajador o sucursal
-        const telefonoContacto =
-          deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
-
         if (telefonoContacto) {
-          // Formatear el número de teléfono para WhatsApp
-          const formatPhoneNumber = (phone) => {
-            let cleaned = phone.replace(/[\s\-\(\)]/g, "");
-            if (cleaned.startsWith("+")) return cleaned;
-            if (cleaned.startsWith("51") && cleaned.length >= 11)
-              return "+" + cleaned;
-            if (cleaned.length === 9 && cleaned.startsWith("9"))
-              return "+51" + cleaned;
-            return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
-          };
-
-          const telefonoFormateado = formatPhoneNumber(telefonoContacto);
-
+          const telefonoFormateado = formatPhoneForYCloud(telefonoContacto);
           const replyMessageId = getReplyMessageIdFromDeposit(deposit);
 
           const result = await yCloudService.sendTextMessage({
-            configId: yCloudConfigId,
-            to: telefonoFormateado,
-            text: mensajeRechazo,
-            context: replyMessageId ? { message_id: replyMessageId } : undefined,
-            replyToMessageId: replyMessageId || undefined,
+            ...buildYCloudMessagePayload({
+              configId: yCloudConfigId,
+              to: telefonoFormateado,
+              text: mensajeRechazo,
+              replyMessageId,
+            }),
           });
 
           if (result.success) {
             console.log(
               "✅ Rechazo enviado:",
               result.data?.id,
-              getReplyMessageIdFromDeposit(deposit)
-                ? "(como respuesta)"
-                : "(mensaje nuevo)",
+              "(mensaje nuevo)",
             );
             alert(`✅ Rechazo enviado:\n\n${mensajeRechazo}`);
           } else {
@@ -1980,45 +2045,24 @@ ${reason}`;
 
       // Intentar enviar mensaje solo si es posible
       if (activeYCloudConfigId && telefonoDisponible && empresa && banco) {
-        // Formatear fecha correctamente sin problemas de zona horaria
-        const formatearFechaDeposito = (fechaString) => {
-          const [year, month, day] = fechaString.split("T")[0].split("-");
-          return `${day}/${month}/${year}`;
-        };
+        const mensajeConfirmacion = buildConfirmationMessage({
+          empresa,
+          banco,
+          fechaDeposito: editableData.fecha_deposito,
+          operacion: editableData.numero_operacion_banco || deposit.numero_operacion,
+          moneda: editableData.moneda,
+          monto: editableData.monto,
+        });
 
-        // Formatear mensaje de confirmación
-        const mensajeConfirmacion = `🎉 *DEPÓSITO CONFIRMADO*
-
-✅ *Empresa:* ${empresa.nombre}
-📍 *Sucursal:* ${deposit.sucursal?.nombre || "-"}
-🏦 *Banco:* ${banco.nombre}
-🔢 *Anexo:* ${editableData.anexo}
-📅 *Fecha Depósito:* ${formatearFechaDeposito(editableData.fecha_deposito)}
-🆔 *Operación:* ${
-          editableData.numero_operacion_banco || deposit.numero_operacion
-        }
-💰 *Importe:* ${editableData.moneda} ${parseFloat(editableData.monto).toFixed(
-          2,
-        )}
-
-El depósito ha sido validado y confirmado exitosamente.
-
-_Mensaje automático del sistema de control de depósitos_`;
-
-        // Formatear el número de teléfono para WhatsApp
-        const formatPhoneNumber = (phone) => {
-          let cleaned = phone.replace(/[\s\-\(\)]/g, "");
-          if (cleaned.startsWith("+")) return cleaned;
-          if (cleaned.startsWith("51") && cleaned.length >= 11)
-            return "+" + cleaned;
-          if (cleaned.length === 9 && cleaned.startsWith("9"))
-            return "+51" + cleaned;
-          return cleaned.startsWith("+") ? cleaned : "+" + cleaned;
-        };
-
-        const telefonoFormateado = formatPhoneNumber(telefonoDisponible);
+        const telefonoFormateado = formatPhoneForYCloud(telefonoDisponible);
 
         const replyMessageId = getReplyMessageIdFromDeposit(deposit);
+        const yCloudPayload = buildYCloudMessagePayload({
+          configId: activeYCloudConfigId,
+          to: telefonoFormateado,
+          text: mensajeConfirmacion,
+          replyMessageId,
+        });
 
         console.log("📱 Enviando mensaje de confirmación:", {
           telefono: telefonoFormateado,
@@ -2027,13 +2071,7 @@ _Mensaje automático del sistema de control de depósitos_`;
         });
 
         // Enviar mensaje (como respuesta al mensaje original si existe chatwoot_message_id)
-        const result = await yCloudService.sendTextMessage({
-          configId: activeYCloudConfigId,
-          to: telefonoFormateado,
-          text: mensajeConfirmacion,
-          context: replyMessageId ? { message_id: replyMessageId } : undefined,
-          replyToMessageId: replyMessageId || undefined,
-        });
+        const result = await yCloudService.sendTextMessage(yCloudPayload);
 
         if (result.success) {
           console.log("✅ Mensaje enviado:", result.data?.id);
@@ -2069,149 +2107,6 @@ _Mensaje automático del sistema de control de depósitos_`;
       });
 
       alert(`❌ Error enviando mensaje: ${error.message}`);
-    } finally {
-      setIsSending(false);
-      setIsProcessing(false);
-    }
-
-    onClose();
-  };
-
-  const handleConfirmDepositSinMensaje = async () => {
-    if (checkResult.isDuplicate) {
-      alert("No puedes confirmar mientras el depósito esté marcado como duplicado.");
-      return;
-    }
-
-    console.log(
-      "🔄 handleConfirmDepositSinMensaje ejecutado - Confirmación SIN envío de mensajes",
-      {
-        editableData: {
-          empresa_id: editableData.empresa_id,
-          banco_id: editableData.banco_id,
-          anexo: editableData.anexo,
-          moneda: editableData.moneda,
-        },
-      },
-    );
-
-    // Validar campos requeridos
-    const camposRequeridos = [];
-
-    if (!editableData.empresa_id) {
-      camposRequeridos.push("Empresa");
-    }
-
-    if (!editableData.banco_id) {
-      camposRequeridos.push("Banco");
-    }
-
-    if (!editableData.anexo) {
-      camposRequeridos.push("Anexo");
-    }
-
-    if (!editableData.moneda) {
-      camposRequeridos.push("Moneda");
-    }
-
-    // Si faltan campos, mostrar error y no continuar
-    if (camposRequeridos.length > 0) {
-      const mensaje = `Por favor, seleccione los siguientes campos requeridos: ${camposRequeridos.join(
-        ", ",
-      )}`;
-      alert(mensaje);
-      console.error("❌ Validación fallida:", {
-        camposRequeridos,
-        editableData,
-      });
-      return;
-    }
-
-    try {
-      await persistSelectedSqlTipoIfNeeded();
-    } catch (error) {
-      console.error("❌ Error aplicando el ID SQL antes de confirmar:", error);
-      alert(`❌ No se pudo aplicar el ID seleccionado en SQL: ${error.message}`);
-      return;
-    }
-
-    console.log("✅ Validación exitosa, confirmando depósito SIN mensaje...");
-
-    const payload = buildUpdatePayload({
-      estado: "validado",
-      motivo_rechazo: null,
-      validado_por: currentUser.id,
-      fecha_validacion: new Date().toISOString(),
-    });
-
-    // Incluir datos del solicitante si han sido modificados
-    if (
-      solicitanteData.trabajador_id &&
-      (solicitanteData.trabajador_id !== deposit.trabajador?.id ||
-        solicitanteData.sucursal_id !== deposit.sucursal?.id)
-    ) {
-      payload.trabajador_sucursal_id = solicitanteData.trabajador_id;
-      payload.sucursal_id = solicitanteData.sucursal_id;
-      console.log("✅ Incluyendo datos del solicitante modificados:", {
-        trabajador_sucursal_id: payload.trabajador_sucursal_id,
-        sucursal_id: payload.sucursal_id,
-      });
-    }
-
-    console.log("📤 Enviando actualización del depósito (sin mensaje):", {
-      depositId: deposit.id,
-      payload: payload,
-    });
-
-    // Actualizar depósito
-    setIsSending(true);
-    setIsProcessing(true);
-
-    try {
-      const response = await apiPut(`/depositos/${deposit.id}`, payload);
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      console.log("✅ Depósito confirmado exitosamente SIN envío de mensajes");
-
-      // Actualizar el depósito preservando las relaciones
-      const updatedDeposit = {
-        ...deposit, // Preservar todo el depósito original (incluyendo relaciones)
-        ...payload, // Sobrescribir solo los campos actualizados
-      };
-
-      // Si se actualizaron datos del solicitante, incluir los objetos relacionados
-      if (payload.trabajador_sucursal_id && payload.sucursal_id) {
-        const trabajadorActualizado = {
-          id: solicitanteData.trabajador_id,
-          nombre: solicitanteData.trabajador_nombre,
-          telefono_origen: solicitanteData.telefono_origen,
-        };
-
-        const sucursalActualizada = {
-          id: solicitanteData.sucursal_id,
-          nombre: solicitanteData.sucursal_nombre,
-        };
-
-        updatedDeposit.trabajador = trabajadorActualizado;
-        updatedDeposit.sucursal = sucursalActualizada;
-
-        console.log(
-          "✅ Actualizando también datos del solicitante en estado local:",
-          {
-            trabajador: trabajadorActualizado,
-            sucursal: sucursalActualizada,
-          },
-        );
-      }
-
-      onUpdateDeposit(updatedDeposit);
-
-      alert("✅ Depósito confirmado exitosamente (sin mensaje)");
-    } catch (error) {
-      console.error("❌ Error confirmando depósito:", error);
-      alert(`❌ Error al confirmar depósito: ${error.message}`);
     } finally {
       setIsSending(false);
       setIsProcessing(false);
@@ -2376,7 +2271,6 @@ _Mensaje automático del sistema de control de depósitos_`;
   }, [
     canConfirm,
     deposit,
-    handleConfirmDepositSinMensaje,
     handleConfirmDepositWithMessage,
     isProcessing,
     isSending,
@@ -3487,10 +3381,10 @@ _Mensaje automático del sistema de control de depósitos_`;
                         onClick={handleConfirmDepositWithMessage}
                         disabled={!canConfirm || isSending || isProcessing}
                         className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                        title="Confirmar depósito y enviar mensaje de WhatsApp"
+                        title="Confirmar depósito y enviar mensaje por YCloud"
                       >
                         {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                        Confirmar
+                        Confirmar con YCloud
                       </button>
                     </div>
                   </div>
@@ -4346,14 +4240,14 @@ _Mensaje automático del sistema de control de depósitos_`;
                         </div>
                       </div>
 
-                      {/* Botón Confirmar Sin Mensaje en el card */}
+                      {/* Grupo de confirmación en el card */}
                       {canShowConfirmActions && (
-                        <div className="pt-3 border-t border-gray-200 dark:border-gray-600">
+                        <div className="pt-3 border-t border-gray-200 dark:border-gray-600 space-y-2">
                           <button
-                            onClick={handleConfirmDepositSinMensaje}
+                            onClick={handleConfirmDepositWithMessage}
                             disabled={!canConfirm || isSending || isProcessing}
                             className="w-full px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2 transition-colors"
-                            title="Confirmar depósito sin enviar mensaje de WhatsApp"
+                            title="Confirmar depósito y enviar mensaje por YCloud"
                           >
                             {isSending ? (
                               <Loader2 className="animate-spin" size={14} />
@@ -4363,7 +4257,7 @@ _Mensaje automático del sistema de control de depósitos_`;
                             <span>
                               {isSending
                                 ? "Confirmando..."
-                                : "Confirmar Sin Mensaje"}
+                                : "Confirmar con YCloud"}
                             </span>
                           </button>
                         </div>
@@ -4593,20 +4487,24 @@ _Mensaje automático del sistema de control de depósitos_`;
                   </button>
                 )}
 
-                {/* Botón Confirmar */}
-                <button
-                  onClick={handleConfirmDepositWithMessage}
-                  disabled={!canConfirm || isSending || isProcessing}
-                  className="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2"
-                  title="Confirmar depósito y enviar mensaje de WhatsApp"
-                >
-                  {isSending ? (
-                    <Loader2 className="animate-spin" size={12} />
-                  ) : (
-                    <CheckCircle size={12} />
-                  )}
-                  <span>{isSending ? "Enviando..." : "Confirmar"}</span>
-                </button>
+                {/* Grupo de confirmación */}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={handleConfirmDepositWithMessage}
+                    disabled={!canConfirm || isSending || isProcessing}
+                    className="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm flex items-center justify-center space-x-2"
+                    title="Confirmar depósito y enviar mensaje por YCloud"
+                  >
+                    {isSending ? (
+                      <Loader2 className="animate-spin" size={12} />
+                    ) : (
+                      <CheckCircle size={12} />
+                    )}
+                    <span>
+                      {isSending ? "Enviando..." : "Confirmar con YCloud"}
+                    </span>
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -4843,12 +4741,13 @@ _Mensaje automático del sistema de control de depósitos_`;
                 <div className="flex flex-wrap gap-2 border-t border-slate-200 bg-slate-50 p-4 dark:border-gray-700 dark:bg-gray-800/70">
                   <button
                     type="button"
-                    onClick={handleConfirmDepositSinMensaje}
+                    onClick={handleConfirmDepositWithMessage}
                     disabled={!canConfirm || isSending || isProcessing}
                     className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Confirmar depósito y enviar mensaje por YCloud"
                   >
                     {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                    Confirmar
+                    Confirmar con YCloud
                   </button>
                   <button
                     type="button"
@@ -5062,3 +4961,4 @@ _Mensaje automático del sistema de control de depósitos_`;
 };
 
 export default DepositDetailModal;
+

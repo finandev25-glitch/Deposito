@@ -86,10 +86,11 @@ const VoucherImage = ({ src, alt, className = "" }) => {
       if (fileIdMatch && fileIdMatch[1]) {
         const fileId = fileIdMatch[1];
         return [
-          `https://drive.google.com/uc?export=view&id=${fileId}`,
+          `https://drive.google.com/file/d/${fileId}/preview`,
           `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`,
+          `https://drive.google.com/uc?export=download&id=${fileId}`,
           `https://img-wrapper.vercel.app/image?url=${encodeURIComponent(
-            `https://drive.google.com/uc?export=view&id=${fileId}`
+            `https://drive.google.com/file/d/${fileId}/preview`
           )}`,
           src, // URL original como último recurso
         ];
@@ -135,22 +136,16 @@ const VoucherImage = ({ src, alt, className = "" }) => {
 
   const handleImageError = () => {
     const loadTime = Date.now() - loadStartTime;
-    console.error(
-      `❌ Error cargando imagen después de ${loadTime}ms:`,
-      displayableUrl
-    );
-
-    // Intentar con la siguiente URL fallback
     if (currentUrlIndex < fallbackUrls.length - 1) {
-      console.log(
-        `🔄 Intentando URL fallback ${currentUrlIndex + 1}:`,
-        fallbackUrls[currentUrlIndex + 1]
+      console.warn(
+        `⚠️ Fallback de imagen después de ${loadTime}ms:`,
+        displayableUrl
       );
       setCurrentUrlIndex(currentUrlIndex + 1);
       setIsLoading(true);
       setLoadStartTime(Date.now());
     } else {
-      console.error(`💥 Todas las URLs fallback fallaron para:`, src);
+      console.error(`❌ Todas las URLs fallback fallaron para:`, src);
       setHasError(true);
       setIsLoading(false);
     }

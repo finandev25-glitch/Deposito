@@ -34,6 +34,20 @@ const YCLOUD_SEND_URL = `${YCLOUD_API_BASE_URL}/whatsapp/messages/sendDirectly`;
 const YCLOUD_MESSAGES_URL = `${YCLOUD_API_BASE_URL}/whatsapp/messages`;
 const YCLOUD_BALANCE_URL = `${YCLOUD_API_BASE_URL}/balance`;
 
+function normalizeYCloudPhoneNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  let cleaned = raw.replace(/[\s\-\(\)]/g, "");
+  if (cleaned.startsWith("00")) {
+    cleaned = `+${cleaned.slice(2)}`;
+  } else if (!cleaned.startsWith("+")) {
+    cleaned = `+${cleaned.replace(/[^\d]/g, "")}`;
+  }
+
+  return cleaned;
+}
+
 function getAllowedOrigin(req) {
   const origin = req.headers.origin;
   const configuredOrigin = process.env.CORS_ORIGIN;
@@ -2048,52 +2062,33 @@ async function fetchYCloudConfigById(configId) {
 async function resolveYCloudReplyContext(client, { to, replyToMessageId } = {}) {
   if (!client || !to) return null;
 
-  const phoneVariants = buildConversationPhoneVariants(normalizeConversationPhone(to));
-  const latestInboundQuery = client
-    .from("whatsapp_mensajes_log")
-    .select("message_id, direction, enviado_en")
-    .eq("direction", "inbound")
-    .or(
-      [
-        ...phoneVariants.map((variant) => `telefono_destino.eq.${variant}`),
-        ...phoneVariants.map((variant) => `conversation_key.eq.${variant}`),
-      ].join(",")
-    )
-    .order("enviado_en", { ascending: false })
-    .limit(1);
+  if (!replyToMessageId) return null;
 
-  if (replyToMessageId) {
-    const exactMatch = await runLoggedQuery(
-      "ycloud.reply.context.exact",
-      { to, replyToMessageId },
-      () =>
-        client
-          .from("whatsapp_mensajes_log")
-          .select("message_id, direction, enviado_en")
-          .eq("message_id", replyToMessageId)
-          .maybeSingle()
-    );
-
-    if (!exactMatch.error && exactMatch.data?.message_id) {
-      if (String(exactMatch.data.direction || "").toLowerCase() === "inbound") {
-        return { message_id: exactMatch.data.message_id };
-      }
-    }
-  }
-
-  const latestInbound = await runLoggedQuery(
-    "ycloud.reply.context.latestInbound",
-    { to, replyToMessageId: replyToMessageId || null },
-    () => latestInboundQuery
+  const exactMatch = await runLoggedQuery(
+    "ycloud.reply.context.exact",
+    { to, replyToMessageId },
+    () =>
+      client
+        .from("whatsapp_mensajes_log")
+        .select("message_id, direction, enviado_en")
+        .eq("message_id", replyToMessageId)
+        .maybeSingle()
   );
 
-  if (latestInbound.error) {
-    console.warn("No se pudo resolver el contexto de respuesta YCloud:", latestInbound.error.message);
+  if (exactMatch.error) {
+    console.warn("No se pudo resolver el contexto de respuesta YCloud:", exactMatch.error.message);
     return null;
   }
 
-  const messageId = latestInbound.data?.[0]?.message_id || null;
-  return messageId ? { message_id: messageId } : null;
+  if (!exactMatch.data?.message_id) {
+    return null;
+  }
+
+  if (String(exactMatch.data.direction || "").toLowerCase() !== "inbound") {
+    return null;
+  }
+
+  return { message_id: exactMatch.data.message_id };
 }
 
 function buildYCloudPayload(messageData, config) {
@@ -2205,14 +2200,34 @@ async function sendYCloudMessage(messageData) {
     throw new Error("ConfiguraciÃ³n YCloud no encontrada o inactiva");
   }
 
+  const resolvedTo = normalizeYCloudPhoneNumber(messageData.to || "");
+  if (!resolvedTo) {
+    throw new Error("to es requerido");
+  }
+  if (!/^\+\d{8,15}$/.test(resolvedTo)) {
+    throw new Error(`El número to de YCloud no tiene formato E.164 válido: ${resolvedTo}`);
+  }
+
+  const resolvedFrom = normalizeYCloudPhoneNumber(
+    messageData.from || config.default_from_number || "",
+  );
+  if (!resolvedFrom) {
+    throw new Error("La configuración YCloud no tiene default_from_number y no se recibió from");
+  }
+  if (!/^\+\d{8,15}$/.test(resolvedFrom)) {
+    throw new Error(`El número from de YCloud no tiene formato E.164 válido: ${resolvedFrom}`);
+  }
+
   const client = getSupabaseAdminClient();
   const contextFromDb = await resolveYCloudReplyContext(client, {
-    to: messageData.to,
+    to: resolvedTo,
     replyToMessageId: messageData.replyToMessageId,
   });
   const payload = buildYCloudPayload(
     {
       ...messageData,
+      to: resolvedTo,
+      from: resolvedFrom,
       context: messageData.context || contextFromDb || undefined,
     },
     config
@@ -2229,11 +2244,26 @@ async function sendYCloudMessage(messageData) {
 
   const responseData = await response.json();
   if (!response.ok) {
-    throw new Error(
-      `YCloud API Error ${response.status}: ${
-        responseData.error?.message || response.statusText
-      }`
-    );
+    const ycloudError =
+      responseData?.error?.whatsappApiError?.message ||
+      responseData?.error?.message ||
+      responseData?.error?.details ||
+      responseData?.message ||
+      response.statusText ||
+      "YCloud request failed";
+
+    console.error("[YCLOUD] sendDirectly failed", {
+      status: response.status,
+      error: responseData?.error || responseData,
+      payload: {
+        to: payload.to,
+        from: payload.from,
+        type: payload.type,
+        hasContext: !!payload.context,
+      },
+    });
+
+    throw new Error(`YCloud API Error ${response.status}: ${ycloudError}`);
   }
 
   return responseData;
