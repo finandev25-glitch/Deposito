@@ -610,12 +610,20 @@ const TableView = ({
                       className="px-2 py-4 text-xs text-red-600 dark:text-red-400 w-20 max-w-20 truncate align-top"
                       title={
                         deposit.estado === "rechazado"
-                          ? deposit.motivo_rechazo
+                          ? String(
+                              deposit.observaciones ||
+                                deposit.motivo_rechazo ||
+                                ""
+                            ).trim()
                           : ""
                       }
                     >
                       {deposit.estado === "rechazado"
-                        ? deposit.motivo_rechazo
+                        ? String(
+                            deposit.observaciones ||
+                              deposit.motivo_rechazo ||
+                              ""
+                          ).trim()
                         : "-"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">

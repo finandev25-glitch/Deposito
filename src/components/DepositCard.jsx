@@ -1,5 +1,12 @@
 import React, { useState, useEffect, memo } from "react";
-import { Building2, Calendar, CreditCard, User, Phone } from "lucide-react";
+import {
+  Building2,
+  Calendar,
+  CreditCard,
+  User,
+  Phone,
+  MessageSquare,
+} from "lucide-react";
 import { getStatusIcon, getStatusInfo } from "../utils/depositStatusHelpers";
 import { formatDate, formatShortDateFromDateOnly } from "../utils/dateFormatters";
 
@@ -54,6 +61,10 @@ const DepositCard = ({ deposit, onClick, isSelected = false }) => {
 
   // Determinar si es un depósito antiguo en validación
   const isOldDeposit = deposit.es_antiguo && deposit.estado === "en_validacion";
+  const rejectedObservation =
+    deposit.estado === "rechazado"
+      ? String(deposit.observaciones || deposit.motivo_rechazo || "").trim()
+      : "";
 
   return (
     <div
@@ -220,8 +231,20 @@ const DepositCard = ({ deposit, onClick, isSelected = false }) => {
                 deposit.en_validacion_por && (
                   <span className="text-blue-600 truncate">
                     ⏳ En validación por: {deposit.en_validacion_por}
-                  </span>
-                )}
+                </span>
+              )}
+            </div>
+          )}
+
+          {rejectedObservation && deposit.estado === "rechazado" && (
+            <div
+              className="col-span-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200"
+              title={rejectedObservation}
+            >
+              <MessageSquare size={10} className="mt-0.5 flex-shrink-0" />
+              <span className="min-w-0 truncate">
+                Obs: {rejectedObservation}
+              </span>
             </div>
           )}
         </div>
@@ -243,6 +266,7 @@ const MemoizedDepositCard = memo(DepositCard, (prevProps, nextProps) => {
     prevProps.deposit.fecha_registro === nextProps.deposit.fecha_registro &&
     prevProps.deposit.validado_por === nextProps.deposit.validado_por &&
     prevProps.deposit.rechazado_por === nextProps.deposit.rechazado_por &&
+    prevProps.deposit.observaciones === nextProps.deposit.observaciones &&
     prevProps.deposit.en_validacion_por ===
       nextProps.deposit.en_validacion_por &&
     prevProps.deposit.es_antiguo === nextProps.deposit.es_antiguo &&

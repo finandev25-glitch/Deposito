@@ -37,6 +37,7 @@ import {
   AlertTriangle,
   Phone,
   FileDown,
+  ExternalLink,
 } from "lucide-react";
 import RejectionModal from "./RejectionModal";
 import GoogleDrivePicker from "./GoogleDrivePicker.jsx";
@@ -429,6 +430,7 @@ const DepositDetailModal = ({
   const [sqlSelectionToast, setSqlSelectionToast] = useState("");
   const sqlSelectedMovementId = sqlSelectedMovement?.ID ?? null;
   const isSqlLoading = sqlMovementsLoading || sqlCortadoLoading;
+  const [duplicateStoreDataSnapshot, setDuplicateStoreDataSnapshot] = useState("");
 
   useEffect(() => {
     if (!sqlSelectionToast) return undefined;
@@ -547,8 +549,8 @@ const DepositDetailModal = ({
   };
 
   const buildYCloudReplyOptions = useCallback(
-    (replyMessageId) => {
-      if (!replyToWhatsAppMessages || !replyMessageId) {
+    (replyMessageId, forceReply = false) => {
+      if ((!replyToWhatsAppMessages && !forceReply) || !replyMessageId) {
         return {};
       }
 
@@ -561,11 +563,11 @@ const DepositDetailModal = ({
   );
 
   const buildYCloudMessagePayload = useCallback(
-    ({ configId, to, text, replyMessageId }) => ({
+    ({ configId, to, text, replyMessageId, forceReply = false }) => ({
       configId,
       to,
       text,
-      ...buildYCloudReplyOptions(replyMessageId),
+      ...buildYCloudReplyOptions(replyMessageId, forceReply),
     }),
     [buildYCloudReplyOptions],
   );
@@ -610,6 +612,12 @@ _Mensaje automático del sistema de control de depósitos_`;
 
 📝 *Motivo del rechazo:*
 ${reason}`;
+
+  const rejectedObservationText = [
+    String(deposit?.observaciones || "").trim(),
+    String(deposit?.motivo_rechazo || "").trim(),
+  ].filter(Boolean);
+  const rejectedObservationSummary = rejectedObservationText.join(" • ");
 
   const getConversationPhoneNumber = useCallback(() => {
     return (
@@ -1374,9 +1382,7 @@ ${reason}`;
           });
           setDuplicateDeposits([]);
           if (shouldUseDuplicateModals) {
-            setDuplicateModalMode("no_duplicate");
-            setIsNoDuplicateModalOpen(true);
-            setIsDuplicatesModalOpen(false);
+            openDuplicateModal("no_duplicate");
           }
           setIsChecking(false);
         }, 500);
@@ -1419,9 +1425,7 @@ ${reason}`;
             `¡Alerta de Duplicado! Se encontraron ${duplicates.length} depósito(s) con los mismos datos.`,
         });
         if (shouldUseDuplicateModals) {
-          setDuplicateModalMode("duplicate");
-          setIsNoDuplicateModalOpen(false);
-          setIsDuplicatesModalOpen(true);
+          openDuplicateModal("duplicate");
         }
       } else {
         setDuplicateDeposits([]);
@@ -1431,9 +1435,7 @@ ${reason}`;
           message: response.message || "No se encontraron duplicados. Puede confirmar el depósito.",
         });
         if (shouldUseDuplicateModals) {
-          setDuplicateModalMode("no_duplicate");
-          setIsDuplicatesModalOpen(false);
-          setIsNoDuplicateModalOpen(true);
+          openDuplicateModal("no_duplicate");
         }
       }
     } catch (criticalError) {
@@ -1720,13 +1722,15 @@ Gracias por su comprensión.`;
 
             const replyMessageId = getReplyMessageIdFromDeposit(deposit);
 
-            const result = await yCloudService.sendTextMessage({
-              configId: yCloudConfigId,
-              to: telefonoFormateado,
-              text: mensajeAntiguo,
-              context: replyMessageId ? { message_id: replyMessageId } : undefined,
-              replyToMessageId: replyMessageId || undefined,
-            });
+            const result = await yCloudService.sendTextMessage(
+              buildYCloudMessagePayload({
+                configId: yCloudConfigId,
+                to: telefonoFormateado,
+                text: mensajeAntiguo,
+                replyMessageId,
+                forceReply: true,
+              }),
+            );
 
             if (result.success) {
               console.log(
@@ -1734,7 +1738,7 @@ Gracias por su comprensión.`;
                 result.data?.id,
                 getReplyMessageIdFromDeposit(deposit)
                   ? "(como respuesta)"
-                  : "(mensaje nuevo)",
+                  : "(sin mensaje para responder)",
               );
               alert(`✅ Mensaje enviado:\n\n${mensajeAntiguo}`);
             } else {
@@ -1824,20 +1828,21 @@ Gracias por su comprensión.`;
           const telefonoFormateado = formatPhoneForYCloud(telefonoContacto);
           const replyMessageId = getReplyMessageIdFromDeposit(deposit);
 
-          const result = await yCloudService.sendTextMessage({
-            ...buildYCloudMessagePayload({
+          const result = await yCloudService.sendTextMessage(
+            buildYCloudMessagePayload({
               configId: yCloudConfigId,
               to: telefonoFormateado,
               text: mensajeRechazo,
               replyMessageId,
+              forceReply: true,
             }),
-          });
+          );
 
           if (result.success) {
             console.log(
               "✅ Rechazo enviado:",
               result.data?.id,
-              "(mensaje nuevo)",
+              replyMessageId ? "(como respuesta)" : "(sin mensaje para responder)",
             );
             alert(`✅ Rechazo enviado:\n\n${mensajeRechazo}`);
           } else {
@@ -2062,6 +2067,7 @@ Gracias por su comprensión.`;
           to: telefonoFormateado,
           text: mensajeConfirmacion,
           replyMessageId,
+          forceReply: true,
         });
 
         console.log("📱 Enviando mensaje de confirmación:", {
@@ -2337,6 +2343,17 @@ Gracias por su comprensión.`;
     () =>
       compactStoreDataRows.map((row) => `${row.label}: ${row.value}`).join("\n"),
     [compactStoreDataRows],
+  );
+  const compactStoreDataSnapshot = duplicateStoreDataSnapshot || compactStoreDataText;
+
+  const openDuplicateModal = useCallback(
+    (mode) => {
+      setDuplicateStoreDataSnapshot(compactStoreDataText);
+      setDuplicateModalMode(mode);
+      setIsNoDuplicateModalOpen(mode === "no_duplicate");
+      setIsDuplicatesModalOpen(mode === "duplicate");
+    },
+    [compactStoreDataText],
   );
 
   const compactContactRows = useMemo(
@@ -2915,11 +2932,20 @@ Gracias por su comprensión.`;
                 >
                   Ventana de validación
                 </div>
-                {deposit.estado === "rechazado" && deposit.motivo_rechazo && (
-                  <div className="mt-1 max-w-[46ch] truncate text-[9px] font-semibold tracking-[0.02em] text-red-700 dark:text-red-300">
-                    Motivo: {deposit.motivo_rechazo}
-                  </div>
-                )}
+                {deposit.estado === "rechazado" &&
+                  rejectedObservationText.length > 0 && (
+                    <div
+                      className="mt-1 flex max-w-full items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[9px] font-semibold tracking-[0.02em] text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200"
+                      title={rejectedObservationSummary}
+                    >
+                      <div className="shrink-0 uppercase tracking-[0.12em] text-red-600 dark:text-red-300">
+                        Obs
+                      </div>
+                      <div className="min-w-0 whitespace-pre-wrap break-words leading-tight">
+                        {rejectedObservationSummary}
+                      </div>
+                    </div>
+                  )}
               </div>
               <div className="flex items-center gap-1.5">
                 <span
@@ -3370,7 +3396,7 @@ Gracias por su comprensión.`;
                           Datos de la tienda
                         </div>
                         <div className="whitespace-pre-line rounded-lg border border-slate-200 bg-white px-4 py-3 font-mono text-sm leading-6 text-slate-900 dark:border-slate-700 dark:bg-gray-950/30 dark:text-slate-100">
-                          {compactStoreDataText}
+                          {compactStoreDataSnapshot}
                         </div>
                       </div>
                     </div>
@@ -3712,6 +3738,23 @@ Gracias por su comprensión.`;
             </div>
           </div>
 
+          {deposit.estado === "rechazado" &&
+            rejectedObservationText.length > 0 && (
+              <div
+                className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/25 dark:text-red-100"
+                title={rejectedObservationSummary}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-red-600 dark:text-red-300">
+                    Observación del rechazo
+                  </div>
+                  <div className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-tight">
+                    {rejectedObservationSummary}
+                  </div>
+                </div>
+              </div>
+            )}
+
           {/* Iframe de Chatwoot embebido */}
 
           <div
@@ -4013,8 +4056,7 @@ Gracias por su comprensión.`;
                                 duplicateDeposits.length > 0 && (
                                   <button
                                     onClick={() => {
-                                      setDuplicateModalMode("duplicate");
-                                      setIsDuplicatesModalOpen(true);
+                                      openDuplicateModal("duplicate");
                                     }}
                                     className="ml-3 inline-flex items-center space-x-1 rounded bg-red-600 px-2 py-1 text-xs font-medium text-white flex-shrink-0 hover:bg-red-700"
                                   >
@@ -4736,7 +4778,7 @@ Gracias por su comprensión.`;
                     Datos de la tienda
                   </div>
                   <div className="whitespace-pre-line rounded-lg border border-slate-200 bg-white px-4 py-3 font-mono text-sm leading-6 text-slate-900 dark:border-slate-700 dark:bg-gray-950/30 dark:text-slate-100">
-                    {compactStoreDataText}
+                    {compactStoreDataSnapshot}
                   </div>
                 </div>
 

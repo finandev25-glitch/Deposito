@@ -78,7 +78,37 @@ function App({ uiMode = "default" }) {
   } = useDepositDashboard();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(isExtensionMode);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const detailPresentationMode = isExtensionMode ? "compact" : "default";
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return false;
+    }
+
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleChange = (event) => {
+      setIsMobileViewport(event.matches);
+    };
+
+    setIsMobileViewport(mediaQuery.matches);
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
+
+  const detailPresentationMode =
+    isExtensionMode || isMobileViewport ? "compact" : "default";
   const attendanceSummary = useMemo(() => {
     if (!currentSelectedDate) return [];
 

@@ -31,6 +31,9 @@ const DailyAttendanceSummary = ({
   items = [],
   selectedDate = null,
   compact = false,
+  showLabel = true,
+  selectedKey = null,
+  onItemClick = null,
   className = "",
 }) => {
   if (!selectedDate || !Array.isArray(items) || items.length === 0) {
@@ -44,29 +47,46 @@ const DailyAttendanceSummary = ({
 
   return (
     <div className={`min-w-0 ${className}`}>
-      <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
-        <Users size={11} className="shrink-0" />
-        <span className="truncate">
-          Atendidos {formattedDate ? `- ${formattedDate}` : ""}
-          {total > 0 ? ` · ${total}` : ""}
-        </span>
-      </div>
+      {showLabel && (
+        <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
+          <Users size={11} className="shrink-0" />
+          <span className="truncate">
+            Atendidos {formattedDate ? `- ${formattedDate}` : ""}
+            {total > 0 ? ` · ${total}` : ""}
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {visibleItems.map((item, index) => {
           const initials = getInitials(item?.name);
           const count = Number(item?.count) || 0;
           const color = PALETTE[index % PALETTE.length];
+          const isSelected = selectedKey != null && String(selectedKey) === String(item?.key ?? "");
+          const Wrapper = onItemClick ? "button" : "div";
+          const wrapperProps = onItemClick
+            ? {
+                type: "button",
+                onClick: () => onItemClick(item),
+                "aria-pressed": isSelected,
+                className:
+                  "group flex min-w-0 flex-col items-center rounded-lg outline-none transition-transform active:scale-95",
+              }
+            : {
+                className: "group flex min-w-0 flex-col items-center",
+              };
 
           return (
-            <div
+            <Wrapper
               key={`${item?.name || "user"}-${index}`}
-              className="group flex min-w-0 flex-col items-center"
               title={`${item?.name || "Sin asignar"}: ${count} depósito${count === 1 ? "" : "s"}`}
+              {...wrapperProps}
             >
               <div
                 className={`relative flex items-center justify-center rounded-full bg-gradient-to-br ${color} ${
                   compact ? "h-8 w-8" : "h-11 w-11"
+                } ${
+                  isSelected ? "ring-2 ring-red-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-900" : ""
                 } text-[10px] font-extrabold text-white shadow-sm ring-2 ring-white dark:ring-gray-900`}
               >
                 <span>{initials}</span>
@@ -80,7 +100,7 @@ const DailyAttendanceSummary = ({
                   {item?.name || "Sin asignar"}
                 </span>
               )}
-            </div>
+            </Wrapper>
           );
         })}
 

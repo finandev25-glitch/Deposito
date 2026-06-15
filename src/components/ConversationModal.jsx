@@ -8,6 +8,8 @@ import {
   Phone,
   RefreshCw,
   ChevronDown,
+  CalendarDays,
+  Reply,
   X,
 } from "lucide-react";
 import yCloudService from "../services/yCloudService.js";
@@ -83,6 +85,90 @@ const CHAT_BACKGROUND_PATTERN = encodeURIComponent(`
     <path class="b" d="M216 116c-6 2-10 6-12 12m-6-18c2 6 6 10 12 12"/>
   </svg>
 `).replace(/%0A\s*/g, "");
+
+const CONVERSATION_PAGE_SIZE = 100;
+const CONVERSATION_CACHE_LIMIT = 8;
+const conversationHistoryCache = new Map();
+const conversationDayKeyFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Lima",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const conversationDayLabelFormatter = new Intl.DateTimeFormat("es-PE", {
+  timeZone: "America/Lima",
+  day: "2-digit",
+  month: "long",
+  year: "numeric",
+});
+
+const getConversationDayKey = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const parts = conversationDayKeyFormatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value || "";
+  const month = parts.find((part) => part.type === "month")?.value || "";
+  const day = parts.find((part) => part.type === "day")?.value || "";
+  return year && month && day ? `${year}-${month}-${day}` : "";
+};
+
+const getConversationDayLabel = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sin fecha";
+
+  const currentKey = getConversationDayKey(date);
+  const todayKey = getConversationDayKey(new Date());
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = getConversationDayKey(yesterday);
+
+  if (currentKey === todayKey) return "Hoy";
+  if (currentKey === yesterdayKey) return "Ayer";
+
+  return conversationDayLabelFormatter.format(date);
+};
+
+const getConversationMessageKey = (message) =>
+  [
+    message?.id || message?.message_id || "",
+    message?.timestamp || "",
+    message?.direction || "",
+    message?.content || message?.text || "",
+    message?.attachmentUrl || "",
+  ].join("|");
+
+const getConversationMessageTime = (message) => new Date(message?.timestamp || message?.createdAt || 0).getTime();
+
+const mergeConversationMessages = (current = [], incoming = []) => {
+  const merged = [];
+  const seen = new Set();
+
+  for (const message of [...current, ...incoming]) {
+    const key = getConversationMessageKey(message);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(message);
+  }
+
+  return merged.sort((a, b) => getConversationMessageTime(a) - getConversationMessageTime(b));
+};
+
+const updateConversationCache = (cacheKey, messages, extra = {}) => {
+  if (!cacheKey) return;
+
+  conversationHistoryCache.set(cacheKey, {
+    messages,
+    updatedAt: new Date().toISOString(),
+    ...extra,
+  });
+
+  while (conversationHistoryCache.size > CONVERSATION_CACHE_LIMIT) {
+    const oldestKey = conversationHistoryCache.keys().next().value;
+    if (!oldestKey) break;
+    conversationHistoryCache.delete(oldestKey);
+  }
+};
 
 const renderAttachmentInline = (message) => {
   const url = message.attachmentUrl;
@@ -195,6 +281,18 @@ const normalizeConversationMessage = (message) => {
     "";
 
   const attachmentType = message?.attachmentType || message?.type || "";
+  const replyContext =
+    message?.replyToMessageId ||
+    message?.reply_to_message_id ||
+    contentObject?.context?.message_id ||
+    contentObject?.context?.id ||
+    contentObject?.replyToMessageId ||
+    contentObject?.reply_to_message_id ||
+    message?.metadata?.reply_to_message_id ||
+    message?.metadata?.replyToMessageId ||
+    message?.metadata?.context?.message_id ||
+    message?.metadata?.context?.id ||
+    null;
   const caption =
     message?.caption ||
     contentObject?.image?.caption ||
@@ -215,6 +313,18 @@ const normalizeConversationMessage = (message) => {
     attachmentName,
     attachmentType,
     timestamp: message?.timestamp || message?.createdAt || message?.enviado_en || message?.received_at || null,
+    replyToMessageId: replyContext ? String(replyContext) : null,
+    replyToText:
+      String(
+        message?.replyToText ||
+          message?.reply_to_text ||
+          message?.metadata?.reply_to_text ||
+          message?.metadata?.context?.body ||
+          message?.metadata?.context?.text ||
+          contentObject?.context?.body ||
+          contentObject?.context?.text ||
+          "",
+      ).trim(),
   };
 };
 
@@ -227,45 +337,182 @@ const ConversationModal = ({
 }) => {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [expandedImageKey, setExpandedImageKey] = useState(null);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [oldestCursor, setOldestCursor] = useState(null);
+  const [latestCursor, setLatestCursor] = useState(null);
   const messagesContainerRef = useRef(null);
+  const messagesRef = useRef([]);
+  const shouldStickToBottomRef = useRef(true);
 
   const normalizedPhone = useMemo(
     () => formatPhoneForDisplay(phoneNumber),
     [phoneNumber],
   );
 
-  const loadConversation = useCallback(async () => {
-    if (!normalizedPhone) {
-      setMessages([]);
-      setError("No hay número de teléfono disponible para esta conversación.");
-      return;
-    }
+  const cacheKey = normalizedPhone || String(phoneNumber || "");
 
-    setLoading(true);
-    setError("");
+  const replyIndex = useMemo(() => {
+    const map = new Map();
+    messages.forEach((message) => {
+      const key = String(message.id || message.message_id || "");
+      if (key) {
+        map.set(key, message);
+      }
+    });
+    return map;
+  }, [messages]);
 
-    try {
-      const response = await yCloudService.getConversationHistory({
-        phoneNumber: normalizedPhone,
-        depositId: deposit?.id,
-        limit: 120,
+  const timelineItems = useMemo(() => {
+    const items = [];
+    let lastDayKey = "";
+
+    messages.forEach((message) => {
+      const dayKey = getConversationDayKey(message.timestamp);
+      if (dayKey && dayKey !== lastDayKey) {
+        items.push({
+          type: "separator",
+          key: `separator-${dayKey}-${getConversationMessageKey(message)}`,
+          label: getConversationDayLabel(message.timestamp),
+        });
+        lastDayKey = dayKey;
+      }
+
+      items.push({
+        type: "message",
+        key: `message-${getConversationMessageKey(message)}`,
+        message,
       });
+    });
 
-      const normalizedMessages = Array.isArray(response?.messages)
-        ? response.messages.map(normalizeConversationMessage)
-        : [];
+    return items;
+  }, [messages]);
 
-      setMessages(normalizedMessages);
-    } catch (err) {
-      setMessages([]);
-      setError(err?.message || "No se pudo cargar la conversación.");
-    } finally {
-      setLoading(false);
+  const conversationRangeLabel = useMemo(() => {
+    if (!oldestCursor && !latestCursor) return "";
+    if (oldestCursor && latestCursor) {
+      return `${formatDateTime(oldestCursor)} - ${formatDateTime(latestCursor)}`;
     }
-  }, [deposit?.id, normalizedPhone]);
+
+    return formatDateTime(oldestCursor || latestCursor);
+  }, [latestCursor, oldestCursor]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const loadConversationPage = useCallback(
+    async ({
+      before = null,
+      hydrateCache = false,
+      keepScrollPosition = false,
+      forceLoading = false,
+    } = {}) => {
+      if (!normalizedPhone) {
+        setMessages([]);
+        setError("No hay número de teléfono disponible para esta conversación.");
+        setHasMoreHistory(false);
+        setOldestCursor(null);
+        setLatestCursor(null);
+        return;
+      }
+
+      const cached = conversationHistoryCache.get(cacheKey);
+      const shouldShowInitialCache = hydrateCache && !before && cached?.messages?.length > 0;
+
+      if (shouldShowInitialCache) {
+        setMessages(cached.messages);
+        setHasMoreHistory(Boolean(cached.hasMoreHistory ?? true));
+        setOldestCursor(cached.oldestCursor || cached.messages?.[0]?.timestamp || null);
+        setLatestCursor(cached.latestCursor || cached.messages?.[cached.messages.length - 1]?.timestamp || null);
+        setError("");
+      }
+
+      if (before) {
+        setLoadingMore(true);
+      } else if (forceLoading || !shouldShowInitialCache) {
+        setLoading(true);
+      }
+
+      setError("");
+      shouldStickToBottomRef.current = !before;
+
+      const container = messagesContainerRef.current;
+      const previousScrollHeight = keepScrollPosition && container ? container.scrollHeight : 0;
+      const previousScrollTop = keepScrollPosition && container ? container.scrollTop : 0;
+
+      try {
+        const response = await yCloudService.getConversationHistory({
+          phoneNumber: normalizedPhone,
+          depositId: deposit?.id,
+          limit: CONVERSATION_PAGE_SIZE,
+          ...(before ? { before } : {}),
+        });
+
+        const normalizedMessages = Array.isArray(response?.messages)
+          ? response.messages.map(normalizeConversationMessage)
+          : [];
+
+        const nextMessages = before
+          ? mergeConversationMessages(messagesRef.current, normalizedMessages)
+          : normalizedMessages;
+
+        const nextHasMore = normalizedMessages.length >= CONVERSATION_PAGE_SIZE;
+        const nextOldestCursor = nextMessages[0]?.timestamp || null;
+        const nextLatestCursor = nextMessages[nextMessages.length - 1]?.timestamp || null;
+
+        setMessages(nextMessages);
+        setHasMoreHistory(nextHasMore);
+        setOldestCursor(nextOldestCursor);
+        setLatestCursor(nextLatestCursor);
+        updateConversationCache(cacheKey, nextMessages, {
+          hasMoreHistory: nextHasMore,
+          oldestCursor: nextOldestCursor,
+          latestCursor: nextLatestCursor,
+        });
+
+        if (before && keepScrollPosition) {
+          window.requestAnimationFrame(() => {
+            const currentContainer = messagesContainerRef.current;
+            if (!currentContainer) return;
+            const delta = currentContainer.scrollHeight - previousScrollHeight;
+            currentContainer.scrollTop = previousScrollTop + delta;
+          });
+        }
+      } catch (err) {
+        if (!shouldShowInitialCache) {
+          setMessages([]);
+        }
+        setError(err?.message || "No se pudo cargar la conversación.");
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [cacheKey, deposit?.id, normalizedPhone],
+  );
+
+  const handleLoadMore = useCallback(() => {
+    if (loading || loadingMore || !hasMoreHistory || !oldestCursor) return;
+    shouldStickToBottomRef.current = false;
+    loadConversationPage({
+      before: oldestCursor,
+      keepScrollPosition: true,
+      forceLoading: true,
+    });
+  }, [hasMoreHistory, loadConversationPage, loading, loadingMore, oldestCursor]);
+
+  const handleRefresh = useCallback(() => {
+    shouldStickToBottomRef.current = true;
+    loadConversationPage({
+      hydrateCache: true,
+      forceLoading: true,
+    });
+    setRefreshNonce((value) => value + 1);
+  }, [loadConversationPage]);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     const container = messagesContainerRef.current;
@@ -277,18 +524,17 @@ const ConversationModal = ({
     });
   }, []);
 
-  const handleMessagesScroll = useCallback(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-  }, []);
+  useEffect(() => {
+    if (!isOpen) return;
+    loadConversationPage({
+      hydrateCache: true,
+      forceLoading: !conversationHistoryCache.get(cacheKey)?.messages?.length,
+    });
+  }, [cacheKey, isOpen, loadConversationPage, refreshNonce]);
 
   useEffect(() => {
     if (!isOpen) return;
-    loadConversation();
-  }, [isOpen, loadConversation, refreshNonce]);
-
-  useEffect(() => {
-    if (!isOpen) return;
+    if (!shouldStickToBottomRef.current) return;
     const rafId = window.requestAnimationFrame(() => scrollToBottom("auto"));
     const timeoutId = window.setTimeout(() => scrollToBottom("auto"), 0);
 
@@ -296,23 +542,7 @@ const ConversationModal = ({
       window.cancelAnimationFrame(rafId);
       window.clearTimeout(timeoutId);
     };
-  }, [isOpen, messages.length, loading, refreshNonce, scrollToBottom]);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-
-    const container = messagesContainerRef.current;
-    if (!container) return undefined;
-
-    handleMessagesScroll();
-    container.addEventListener("scroll", handleMessagesScroll, { passive: true });
-    window.addEventListener("resize", handleMessagesScroll);
-
-    return () => {
-      container.removeEventListener("scroll", handleMessagesScroll);
-      window.removeEventListener("resize", handleMessagesScroll);
-    };
-  }, [isOpen, messages.length, handleMessagesScroll]);
+  }, [isOpen, messages.length, loading, loadingMore, refreshNonce, scrollToBottom]);
 
   useEffect(() => {
     if (!expandedImageKey) return undefined;
@@ -326,10 +556,6 @@ const ConversationModal = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [expandedImageKey]);
-
-  const handleRefresh = () => {
-    setRefreshNonce((value) => value + 1);
-  };
 
   const content = (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3">
@@ -380,13 +606,20 @@ const ConversationModal = ({
         </div>
 
         <div className="border-b border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300">
-          <span className="inline-flex items-center gap-2 rounded-full bg-green-100 px-2.5 py-1 font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-300">
-            <Phone className="h-3.5 w-3.5" />
-            {normalizedPhone || "Sin teléfono"}
-          </span>
-          <span className="ml-3">
-            Mensajes cargados: <strong>{messages.length}</strong>
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-2 rounded-full bg-green-100 px-2.5 py-1 font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-300">
+              <Phone className="h-3.5 w-3.5" />
+              {normalizedPhone || "Sin teléfono"}
+            </span>
+            <span>
+              Mensajes cargados: <strong>{messages.length}</strong>
+            </span>
+            {conversationRangeLabel ? (
+              <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-gray-500 shadow-sm dark:bg-gray-950 dark:text-gray-300">
+                {conversationRangeLabel}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div
@@ -430,34 +663,86 @@ const ConversationModal = ({
             </div>
           ) : (
             <div className="mx-auto flex max-w-4xl flex-col gap-3">
-              {messages.map((message) => {
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/85 px-4 py-3 text-xs text-gray-600 shadow-sm backdrop-blur dark:border-gray-800 dark:bg-gray-950/85 dark:text-gray-300">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="h-4 w-4 text-emerald-600 dark:text-emerald-300" />
+                  <span className="font-semibold">Historial cargado</span>
+                  <span className="text-gray-500 dark:text-gray-400">({messages.length} mensajes)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {loadingMore ? (
+                    <span className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Cargando más...
+                    </span>
+                  ) : hasMoreHistory ? (
+                    <button
+                      type="button"
+                      onClick={handleLoadMore}
+                      className="rounded-full border border-emerald-200 bg-white px-3 py-1 font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 dark:border-emerald-900/50 dark:bg-gray-950 dark:text-emerald-300"
+                    >
+                      Cargar más
+                    </button>
+                  ) : (
+                    <span className="rounded-full bg-gray-100 px-3 py-1 font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+                      Historial completo
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {timelineItems.map((item) => {
+                if (item.type === "separator") {
+                  return (
+                    <div key={item.key} className="flex justify-center py-1">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white/95 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-950/95 dark:text-gray-300">
+                        <CalendarDays className="h-3.5 w-3.5" />
+                        {item.label}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const message = item.message;
                 const isOutbound = String(message.direction || "").toLowerCase() === "outbound";
                 const bubbleStyle = getMessageBubbleStyle(isOutbound ? "outbound" : "inbound");
-                const mediaTypeLabel = getMediaTypeLabel(getAttachmentKind(message.attachmentType, message.attachmentUrl));
                 const imageKey = `${message.id || message.message_id || message.timestamp}-${message.direction || "message"}-image`;
                 const isExpanded = expandedImageKey === imageKey;
-                const isImageAttachment =
-                  !!message.attachmentUrl &&
-                  getAttachmentKind(message.attachmentType, message.attachmentUrl) === "image";
+                const attachmentKind = getAttachmentKind(message.attachmentType, message.attachmentUrl);
+                const isImageAttachment = !!message.attachmentUrl && attachmentKind === "image";
+                const replyTarget = message.replyToMessageId ? replyIndex.get(String(message.replyToMessageId)) : null;
+                const replyPreviewRaw = (replyTarget?.content || replyTarget?.text || message.replyToText || "").trim();
+                const replyPreview = replyPreviewRaw.length > 180 ? `${replyPreviewRaw.slice(0, 180)}...` : replyPreviewRaw;
+                const hasReplyContext = Boolean(message.replyToMessageId || message.replyToText);
+                const replyAuthorLabel = replyTarget
+                  ? replyTarget.direction === "outbound"
+                    ? "Tú"
+                    : "Cliente"
+                  : hasReplyContext
+                    ? "Cliente"
+                    : "Mensaje original";
                 const messageText =
                   typeof message.content === "string" && message.content.trim() !== "[object Object]"
                     ? message.content
                     : "";
-                const imageCaption =
-                  isImageAttachment
-                    ? (message.caption || messageText || message.attachmentName || "").trim()
-                    : "";
+                const imageCaption = isImageAttachment
+                  ? (message.caption || messageText || message.attachmentName || "").trim()
+                  : "";
                 const topText = isImageAttachment ? "" : messageText;
 
                 return (
                   <div
-                    key={`${message.id || message.message_id || message.timestamp}-${message.direction || "message"}`}
+                    key={item.key}
                     className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}
+                    style={{
+                      contentVisibility: "auto",
+                      containIntrinsicSize: "180px",
+                    }}
                   >
                     <div
                       className={`relative max-w-[90%] rounded-2xl px-4 py-3 text-sm transition-all duration-200 ${
                         isExpanded ? "scale-[1.3] z-20" : ""
-                      } ${bubbleStyle}`}
+                      } ${bubbleStyle} ${hasReplyContext ? "ring-1 ring-emerald-200/70 border-l-4 border-l-emerald-500" : ""}`}
                       style={
                         isOutbound
                           ? {
@@ -485,17 +770,40 @@ const ConversationModal = ({
                           <X className="h-4 w-4" />
                         </button>
                       ) : null}
-                      <div className="flex items-center justify-end gap-3">
-                        <span className="text-[10px] opacity-80">
-                          {formatDateTime(message.timestamp)}
+
+                      <div className="flex items-center justify-between gap-3">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                            message.replyToMessageId
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                              : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                          }`}
+                        >
+                          {message.replyToMessageId ? <Reply className="h-3 w-3" /> : null}
+                          {hasReplyContext ? "Respuesta" : isOutbound ? "Salida" : "Entrada"}
                         </span>
+                        <span className="text-[10px] opacity-80">{formatDateTime(message.timestamp)}</span>
                       </div>
+
+                      {hasReplyContext ? (
+                        <div className="mt-2 overflow-hidden rounded-xl border border-emerald-200 bg-white/95 text-[11px] leading-4 text-emerald-950 shadow-sm dark:border-emerald-900/40 dark:bg-gray-950/80 dark:text-emerald-50">
+                          <div className="flex items-center gap-1 border-b border-emerald-100 px-3 py-1.5 font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:border-emerald-900/40 dark:text-emerald-300">
+                            <Reply className="h-3 w-3" />
+                            <span>Respuesta a {replyAuthorLabel}</span>
+                          </div>
+                          <div className="px-3 py-2">
+                            <p className="border-l-2 border-emerald-500 pl-2 whitespace-pre-wrap break-words text-gray-700 dark:text-gray-200">
+                              {replyPreview || "Mensaje original no cargado en este tramo del historial"}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
 
                       {topText ? (
                         <p className="mt-2 whitespace-pre-wrap leading-6">{topText}</p>
                       ) : null}
 
-                      {message.attachmentUrl && getAttachmentKind(message.attachmentType, message.attachmentUrl) === "image" ? (
+                      {message.attachmentUrl && attachmentKind === "image" ? (
                         <div className="mt-3 overflow-hidden rounded-xl border border-black/10 bg-white/10 p-2">
                           <button
                             type="button"
@@ -538,7 +846,6 @@ const ConversationModal = ({
                       ) : (
                         renderAttachmentInline(message)
                       )}
-
                     </div>
                   </div>
                 );

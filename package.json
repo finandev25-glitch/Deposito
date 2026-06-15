@@ -8,6 +8,7 @@
     "dev:frontend": "vite --port 5173",
     "dev:backend": "node server.js",
     "dev:all": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
+    "dev:full": "powershell -ExecutionPolicy Bypass -File ./start-dev.ps1",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "node server.js",

@@ -1274,15 +1274,16 @@ async function getCurrentPendingDepositCount(client) {
 }
 
 async function hasAutomaticSupportAlertForDeposit(client, depositId) {
+  const depositLabel = String(depositId || "").trim();
   const existingAlertResult = await runLoggedQuery(
     "support_requests.automatic_alert.find_existing",
     { depositId },
     () =>
       client
         .from("support_requests")
-        .select("id, status, source, deposit_id")
-        .eq("deposit_id", depositId)
+        .select("id, status, source, reason")
         .eq("source", AUTOMATIC_SUPPORT_ALERT_SOURCE)
+        .ilike("reason", `%deposito ${depositLabel}%`)
         .maybeSingle()
   );
 
@@ -1358,7 +1359,6 @@ async function processAutomaticSupportAlertCandidate(client, deposit, options = 
     pending_count: totalPending,
     status: "pendiente",
     source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
-    deposit_id: depositId,
     created_at: nowIso,
     updated_at: nowIso,
   };
@@ -1992,6 +1992,12 @@ async function uploadWhatsAppMediaToStorage(
 function normalizeStoredConversationMessage(row) {
   const contenido = row?.contenido && typeof row.contenido === "object" ? row.contenido : {};
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const messageContext =
+    metadata?.context && typeof metadata.context === "object"
+      ? metadata.context
+      : contenido?.context && typeof contenido.context === "object"
+        ? contenido.context
+        : null;
   const attachmentUrl =
     row?.attachment_url ||
     metadata?.attachment_url ||
@@ -2022,6 +2028,25 @@ function normalizeStoredConversationMessage(row) {
     contenido?.audio?.caption ||
     metadata?.caption ||
     "";
+  const replyToMessageId =
+    row?.reply_to_message_id ||
+    row?.replyToMessageId ||
+    metadata?.reply_to_message_id ||
+    metadata?.replyToMessageId ||
+    messageContext?.message_id ||
+    messageContext?.id ||
+    contenido?.replyToMessageId ||
+    contenido?.reply_to_message_id ||
+    contenido?.quoted_message_id ||
+    null;
+  const replyToText =
+    metadata?.reply_to_text ||
+    messageContext?.text ||
+    messageContext?.body ||
+    messageContext?.caption ||
+    contenido?.replyToText ||
+    contenido?.reply_to_text ||
+    "";
   const rawText =
     contenido?.text?.body ||
     contenido?.body ||
@@ -2047,6 +2072,8 @@ function normalizeStoredConversationMessage(row) {
     attachmentType,
     source: row?.source || metadata?.source || "database",
     mediaStoragePath: row?.storage_path || metadata?.storage_path || null,
+    replyToMessageId: replyToMessageId ? String(replyToMessageId) : null,
+    replyToText: String(replyToText || "").trim(),
   };
 }
 
@@ -2280,7 +2307,7 @@ async function resolveYCloudReplyContext(client, { to, replyToMessageId } = {}) 
     () =>
       client
         .from("whatsapp_mensajes_log")
-        .select("message_id, direction, enviado_en")
+        .select("message_id, direction, enviado_en, contenido, metadata")
         .eq("message_id", replyToMessageId)
         .maybeSingle()
   );
@@ -2298,7 +2325,27 @@ async function resolveYCloudReplyContext(client, { to, replyToMessageId } = {}) 
     return null;
   }
 
-  return { message_id: exactMatch.data.message_id };
+  const contenido = exactMatch.data.contenido && typeof exactMatch.data.contenido === "object"
+    ? exactMatch.data.contenido
+    : {};
+  const metadata = exactMatch.data.metadata && typeof exactMatch.data.metadata === "object"
+    ? exactMatch.data.metadata
+    : {};
+  const text =
+    contenido?.text?.body ||
+    contenido?.body ||
+    contenido?.message ||
+    metadata?.messagePayload?.text?.body ||
+    metadata?.messagePayload?.body ||
+    metadata?.messagePayload?.message ||
+    "";
+
+  return {
+    message_id: exactMatch.data.message_id,
+    text: String(text || "").trim(),
+    body: String(text || "").trim(),
+    direction: "inbound",
+  };
 }
 
 function buildYCloudPayload(messageData, config) {
@@ -2476,7 +2523,10 @@ async function sendYCloudMessage(messageData) {
     throw new Error(`YCloud API Error ${response.status}: ${ycloudError}`);
   }
 
-  return responseData;
+  return {
+    ...responseData,
+    __payload: payload,
+  };
 }
 
 async function fetchWhatsAppCredentials() {
@@ -2547,11 +2597,15 @@ function buildFallbackWhatsappLogRows(row) {
     tipo_mensaje: row?.tipo_mensaje || "text",
     contenido: row?.contenido || {},
     message_id: row?.message_id || null,
+    wamid: row?.wamid || null,
     estado: row?.estado || "enviado",
     error_mensaje: row?.error_mensaje || null,
     metadata: row?.metadata || {},
     enviado_por: row?.enviado_por || null,
     enviado_en: row?.enviado_en || new Date().toISOString(),
+    reply_to_message_id: row?.reply_to_message_id || null,
+    reply_to_text: row?.reply_to_text || null,
+    reply_to_direction: row?.reply_to_direction || null,
   };
 
   return [
@@ -2566,6 +2620,10 @@ function buildFallbackWhatsappLogRows(row) {
       attachment_mime_type: row?.attachment_mime_type || null,
       storage_bucket: row?.storage_bucket || "whatsapp-media",
       storage_path: row?.storage_path || null,
+      wamid: row?.wamid || null,
+      reply_to_message_id: row?.reply_to_message_id || null,
+      reply_to_text: row?.reply_to_text || null,
+      reply_to_direction: row?.reply_to_direction || null,
     },
     {
       ...baseRow,
@@ -2573,6 +2631,10 @@ function buildFallbackWhatsappLogRows(row) {
       direction: row?.direction || "outbound",
       source: row?.source || "ycloud",
       conversation_key: row?.conversation_key || normalizeConversationPhone(row?.telefono_destino || ""),
+      wamid: row?.wamid || null,
+      reply_to_message_id: row?.reply_to_message_id || null,
+      reply_to_text: row?.reply_to_text || null,
+      reply_to_direction: row?.reply_to_direction || null,
     },
     baseRow,
   ];
@@ -2597,6 +2659,9 @@ async function logWhatsAppMessageViaRpc(client, row) {
       attachment_mime_type: row?.attachment_mime_type || null,
       storage_bucket: row?.storage_bucket || null,
       storage_path: row?.storage_path || null,
+      reply_to_message_id: row?.reply_to_message_id || null,
+      reply_to_text: row?.reply_to_text || null,
+      reply_to_direction: row?.reply_to_direction || null,
     },
   };
 
@@ -2645,6 +2710,23 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
   if (!client) return { logInserted: false, logError: null };
 
   try {
+    const { metadata: extraMetadataInput, ...extraRow } = extra || {};
+    const extraMetadata = extraMetadataInput && typeof extraMetadataInput === "object" ? extraMetadataInput : {};
+    const replyContext = reqBody?.context && typeof reqBody.context === "object" ? reqBody.context : null;
+    const resolvedReplyContext =
+      reqBody?.replyToMessageId
+        ? await resolveYCloudReplyContext(client, {
+            to: reqBody?.to || null,
+            replyToMessageId: reqBody.replyToMessageId,
+          })
+        : null;
+    const replyText =
+      extraMetadata.reply_to_text ||
+      resolvedReplyContext?.body ||
+      resolvedReplyContext?.text ||
+      replyContext?.body ||
+      replyContext?.text ||
+      null;
     const logResult = await logWhatsAppMessage(client, {
       telefono_destino: normalizeStoredPhone(reqBody?.to || null),
       tipo_mensaje: reqBody?.type || "text",
@@ -2652,17 +2734,29 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
       estado: "enviado",
       enviado_en: new Date().toISOString(),
       message_id: data?.messages?.[0]?.id || data?.id || null,
+      wamid: data?.messages?.[0]?.id || data?.id || null,
       direction: "outbound",
       source: "ycloud",
       conversation_key: normalizeConversationPhone(reqBody?.to || ""),
       configuracion_id: reqBody?.configId || null,
+      reply_to_message_id: reqBody?.replyToMessageId || null,
+      reply_to_text: replyText,
+      reply_to_direction: resolvedReplyContext?.direction || replyContext?.direction || null,
       metadata: {
         direction: "outbound",
         source: "ycloud",
         to: reqBody?.to || null,
-        ...extra.metadata,
+        reply_to_message_id: reqBody?.replyToMessageId || null,
+        reply_to_text: replyText,
+        reply_to_direction:
+          extraMetadata.reply_to_direction ||
+          resolvedReplyContext?.direction ||
+          replyContext?.direction ||
+          null,
+        context: reqBody?.context || null,
+        ...extraMetadata,
       },
-      ...extra,
+      ...extraRow,
     });
 
     return { logInserted: !!logResult, logError: null };
@@ -3516,7 +3610,19 @@ function registerJsonRoutes(app) {
     try {
       const data = await sendYCloudMessage(req.body || {});
       const client = getSupabaseAdminClient();
-      const { logInserted, logError } = await logYCloudOutboundMessage(client, req.body || {}, data);
+      const payloadContext = data?.__payload?.context || req.body?.context || null;
+      const { logInserted, logError } = await logYCloudOutboundMessage(
+        client,
+        req.body || {},
+        data,
+        {
+          metadata: {
+            context: payloadContext,
+            reply_to_text: payloadContext?.body || payloadContext?.text || null,
+            reply_to_direction: payloadContext?.direction || null,
+          },
+        }
+      );
       if (!logInserted) {
         console.warn("[YCLOUD] Mensaje enviado pero no se pudo guardar en whatsapp_mensajes_log:", logError);
       }
@@ -3562,6 +3668,13 @@ function registerJsonRoutes(app) {
           },
         },
         data,
+        {
+          metadata: {
+            context: data?.__payload?.context || null,
+            reply_to_text: data?.__payload?.context?.body || data?.__payload?.context?.text || null,
+            reply_to_direction: data?.__payload?.context?.direction || null,
+          },
+        },
       );
       if (!logInserted) {
         console.warn("[YCLOUD] Mensaje de prueba enviado pero no se pudo guardar en whatsapp_mensajes_log:", logError);
@@ -3581,7 +3694,7 @@ function registerJsonRoutes(app) {
 
   app.post("/api/ycloud/conversation", async (req, res) => {
     try {
-      const { depositId, phoneNumber, startDate, endDate, limit = 50 } = req.body || {};
+      const { depositId, phoneNumber, startDate, endDate, before, limit = 100 } = req.body || {};
       let normalizedPhone = normalizeConversationPhone(phoneNumber);
 
       if (!normalizedPhone && depositId) {
@@ -3597,9 +3710,18 @@ function registerJsonRoutes(app) {
         return res.status(503).json({ success: false, error: "Supabase no está configurado en el backend", messages: [] });
       }
 
-      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+      const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
       const phoneVariants = buildConversationPhoneVariants(normalizedPhone);
-      const storedQuery = client
+      const defaultConversationStartIso = (() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        return d.toISOString();
+      })();
+      const conversationStartIso = startDate || defaultConversationStartIso;
+      const conversationEndIso = endDate || null;
+      const cursorBeforeIso = before || null;
+
+      let storedQuery = client
         .from("whatsapp_mensajes_log")
         .select("*")
         .or(
@@ -3608,11 +3730,17 @@ function registerJsonRoutes(app) {
             ...phoneVariants.map((variant) => `conversation_key.eq.${variant}`),
           ].join(",")
         )
-        .order("enviado_en", { ascending: true })
+        .gte("enviado_en", conversationStartIso)
+        .order("enviado_en", { ascending: false, nullsFirst: false })
         .limit(safeLimit);
 
-      if (startDate) storedQuery.gte("enviado_en", startDate);
-      if (endDate) storedQuery.lte("enviado_en", endDate);
+      if (conversationEndIso) {
+        storedQuery = storedQuery.lte("enviado_en", conversationEndIso);
+      }
+
+      if (cursorBeforeIso) {
+        storedQuery = storedQuery.lt("enviado_en", cursorBeforeIso);
+      }
 
       const storedResult = await runLoggedQuery(
         "whatsapp.conversation.stored",
@@ -3621,6 +3749,9 @@ function registerJsonRoutes(app) {
           phoneVariants,
           limit: safeLimit,
           depositId: depositId || null,
+          startDate: conversationStartIso,
+          endDate: conversationEndIso,
+          before: cursorBeforeIso,
         },
         () => storedQuery
       );
@@ -3647,18 +3778,18 @@ function registerJsonRoutes(app) {
         deduped.push(message);
       }
 
-      deduped.sort((a, b) => {
-        const dateA = new Date(a.timestamp || a.createdAt || 0).getTime();
-        const dateB = new Date(b.timestamp || b.createdAt || 0).getTime();
-        return dateA - dateB;
-      });
+      const getMessageTime = (message) =>
+        new Date(message.timestamp || message.createdAt || 0).getTime();
+
+      const recentMessages = deduped
+        .sort((a, b) => getMessageTime(a) - getMessageTime(b));
 
       res.json({
         success: true,
-        message: `Se encontraron ${deduped.length} mensajes`,
-        messages: deduped,
-        totalCount: deduped.length,
-        filteredCount: deduped.length,
+        message: `Se encontraron ${recentMessages.length} mensajes`,
+        messages: recentMessages,
+        totalCount: recentMessages.length,
+        filteredCount: recentMessages.length,
         sourceSummary: {
           storedCount: storedMessages.length,
           remoteCount: 0,
@@ -3738,6 +3869,8 @@ function registerJsonRoutes(app) {
             to: message?.to || payload?.to || null,
             rawPayload: payload,
             messagePayload: message,
+            context: message?.context || null,
+            reply_to_message_id: message?.context?.message_id || message?.context?.id || null,
             attachment_url: storedMedia?.publicUrl || attachmentUrl || null,
             attachment_path: storedMedia?.path || null,
             attachment_name: storedMedia?.attachmentName || attachmentName || null,

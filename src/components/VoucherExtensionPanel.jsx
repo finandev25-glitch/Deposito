@@ -71,6 +71,10 @@ export default function VoucherExtensionPanel({
     depositData?.numero_operacion_solicitante ||
     depositData?.numero_operacion ||
     "-";
+  const rejectedObservationText = [
+    String(depositData?.observaciones || "").trim(),
+    String(depositData?.motivo_rechazo || "").trim(),
+  ].filter(Boolean);
 
   return (
     <AnimatePresence>
@@ -213,6 +217,20 @@ export default function VoucherExtensionPanel({
                       </div>
                     </div>
                   </div>
+
+                  {depositData?.estado === "rechazado" &&
+                    rejectedObservationText.length > 0 && (
+                      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/25 dark:text-red-100">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-red-600 dark:text-red-300">
+                          Observación del rechazo
+                        </p>
+                        <div className="mt-2 space-y-1 whitespace-pre-line break-words">
+                          {rejectedObservationText.map((text, index) => (
+                            <div key={`${text}-${index}`}>{text}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                 </div>
               </div>
             </div>

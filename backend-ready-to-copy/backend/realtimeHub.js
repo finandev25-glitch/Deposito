@@ -34,6 +34,20 @@ const YCLOUD_SEND_URL = `${YCLOUD_API_BASE_URL}/whatsapp/messages/sendDirectly`;
 const YCLOUD_MESSAGES_URL = `${YCLOUD_API_BASE_URL}/whatsapp/messages`;
 const YCLOUD_BALANCE_URL = `${YCLOUD_API_BASE_URL}/balance`;
 
+function normalizeYCloudPhoneNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  let cleaned = raw.replace(/[\s\-\(\)]/g, "");
+  if (cleaned.startsWith("00")) {
+    cleaned = `+${cleaned.slice(2)}`;
+  } else if (!cleaned.startsWith("+")) {
+    cleaned = `+${cleaned.replace(/[^\d]/g, "")}`;
+  }
+
+  return cleaned;
+}
+
 function getAllowedOrigin(req) {
   const origin = req.headers.origin;
   const configuredOrigin = process.env.CORS_ORIGIN;
@@ -170,6 +184,57 @@ function sanitizeFilenamePart(value, fallback = "voucher") {
   const text = String(value || fallback).trim();
   const sanitized = text.replace(/[\/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
   return sanitized || fallback;
+}
+
+function parseDataUrlImage(dataUrl) {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) return null;
+
+  const mimeType = match[1] || "image/png";
+  const base64 = match[2] || "";
+  if (!base64) return null;
+
+  return {
+    mimeType,
+    buffer: Buffer.from(base64, "base64"),
+    extension: guessExtensionFromMimeType(mimeType, "png"),
+  };
+}
+
+async function uploadDepositCroppedImageToStorage(
+  client,
+  dataUrl,
+  { depositId = "", numeroOperacion = "", fileName = "" } = {},
+) {
+  const parsed = parseDataUrlImage(dataUrl);
+  if (!client || !parsed?.buffer?.length) return null;
+
+  const baseName = sanitizeFilenamePart(
+    fileName || numeroOperacion || depositId || "imagen_recortada",
+    "imagen_recortada",
+  );
+  const storagePath = `depositos-regularizados/${Date.now()}-${baseName}.${parsed.extension}`;
+
+  const { error: uploadError } = await client.storage.from(WHATSAPP_MEDIA_BUCKET).upload(storagePath, parsed.buffer, {
+    contentType: parsed.mimeType,
+    upsert: true,
+  });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data: publicUrlData } = client.storage.from(WHATSAPP_MEDIA_BUCKET).getPublicUrl(storagePath);
+
+  return {
+    bucket: WHATSAPP_MEDIA_BUCKET,
+    path: storagePath,
+    publicUrl: publicUrlData?.publicUrl || null,
+    contentType: parsed.mimeType,
+  };
 }
 
 function formatDateForDisplay(value) {
@@ -880,6 +945,165 @@ function getEnv(name) {
   return process.env[name] || process.env[`VITE_${name}`];
 }
 
+function normalizeOpenAIExtractedText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeOpenAIMoney(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const cleaned = raw.replace(/[^\d,.-]/g, "");
+  if (!cleaned) return "";
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  let normalized = cleaned;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else {
+    normalized = cleaned.replace(/,/g, "");
+  }
+
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? "" : String(parsed);
+}
+
+function normalizeOpenAIDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split("/");
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeOpenAIMoneda(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw.includes("USD") || raw.includes("$") || raw.includes("DOLAR") || raw.includes("DÓLAR")) {
+    return "USD";
+  }
+  if (raw.includes("PEN") || raw.includes("SOL") || raw.includes("S/")) {
+    return "PEN";
+  }
+  return "";
+}
+
+async function extractVoucherDataWithOpenAI(dataUrl) {
+  const apiKey = getEnv("OPENAI_API_KEY");
+  const model = getEnv("OPENAI_VOUCHER_MODEL") || "gpt-4o-mini";
+
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY no está configurada en el backend");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      max_completion_tokens: 400,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "voucher_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              cliente: { type: "string" },
+              numero_operacion: { type: "string" },
+              numero_operacion_banco: { type: "string" },
+              monto: { type: "string" },
+              moneda: { type: "string" },
+              fecha_deposito: { type: "string" },
+            },
+            required: [
+              "cliente",
+              "numero_operacion",
+              "numero_operacion_banco",
+              "monto",
+              "moneda",
+              "fecha_deposito",
+            ],
+          },
+        },
+      },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Eres un extractor de datos de vouchers bancarios. Devuelve solo JSON válido con los campos solicitados. Si un dato no aparece con claridad, devuelve una cadena vacía. No inventes información.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extrae del voucher los campos cliente, numero_operacion, numero_operacion_banco, monto, moneda y fecha_deposito. Usa fecha_deposito en formato YYYY-MM-DD.",
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: dataUrl,
+                detail: "high",
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  const rawText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI error ${response.status}: ${rawText}`);
+  }
+
+  const payload = JSON.parse(rawText);
+  const content = payload?.choices?.[0]?.message?.content || "";
+  if (!content) {
+    throw new Error("OpenAI no devolvió contenido para la extracción");
+  }
+
+  const extracted = JSON.parse(content);
+  const cliente = normalizeOpenAIExtractedText(extracted.cliente);
+  const numeroOperacion = normalizeOpenAIExtractedText(extracted.numero_operacion).replace(/\D/g, "");
+  const numeroOperacionBanco = normalizeOpenAIExtractedText(extracted.numero_operacion_banco).replace(/\D/g, "") || numeroOperacion;
+  const monto = normalizeOpenAIMoney(extracted.monto);
+  const moneda = normalizeOpenAIMoneda(extracted.moneda);
+  const fechaDeposito = normalizeOpenAIDate(extracted.fecha_deposito);
+
+  return {
+    cliente,
+    numero_operacion: numeroOperacion,
+    numero_operacion_banco: numeroOperacionBanco,
+    monto,
+    moneda,
+    fecha_deposito: fechaDeposito,
+  };
+}
+
 function getSupabaseClient() {
   if (supabaseClient) return supabaseClient;
 
@@ -1050,15 +1274,16 @@ async function getCurrentPendingDepositCount(client) {
 }
 
 async function hasAutomaticSupportAlertForDeposit(client, depositId) {
+  const depositLabel = String(depositId || "").trim();
   const existingAlertResult = await runLoggedQuery(
     "support_requests.automatic_alert.find_existing",
     { depositId },
     () =>
       client
         .from("support_requests")
-        .select("id, status, source, deposit_id")
-        .eq("deposit_id", depositId)
+        .select("id, status, source, reason")
         .eq("source", AUTOMATIC_SUPPORT_ALERT_SOURCE)
+        .ilike("reason", `%deposito ${depositLabel}%`)
         .maybeSingle()
   );
 
@@ -1134,7 +1359,6 @@ async function processAutomaticSupportAlertCandidate(client, deposit, options = 
     pending_count: totalPending,
     status: "pendiente",
     source: AUTOMATIC_SUPPORT_ALERT_SOURCE,
-    deposit_id: depositId,
     created_at: nowIso,
     updated_at: nowIso,
   };
@@ -1237,12 +1461,12 @@ async function syncAutomaticSupportAlert() {
       "depositos.automatic_alert.recent_inserts",
       { sinceIso, untilIso: nowIso },
       () =>
-          client
+        client
           .from("depositos")
-          .select("id, estado, created_at, fecha_registro")
-          .gt("created_at", sinceIso)
-          .lte("created_at", nowIso)
-          .order("created_at", { ascending: true })
+          .select("id, estado, fecha_registro")
+          .gte("fecha_registro", sinceIso)
+          .lte("fecha_registro", nowIso)
+          .order("fecha_registro", { ascending: true })
           .order("id", { ascending: true })
     );
 
@@ -1768,6 +1992,12 @@ async function uploadWhatsAppMediaToStorage(
 function normalizeStoredConversationMessage(row) {
   const contenido = row?.contenido && typeof row.contenido === "object" ? row.contenido : {};
   const metadata = row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const messageContext =
+    metadata?.context && typeof metadata.context === "object"
+      ? metadata.context
+      : contenido?.context && typeof contenido.context === "object"
+        ? contenido.context
+        : null;
   const attachmentUrl =
     row?.attachment_url ||
     metadata?.attachment_url ||
@@ -1798,6 +2028,25 @@ function normalizeStoredConversationMessage(row) {
     contenido?.audio?.caption ||
     metadata?.caption ||
     "";
+  const replyToMessageId =
+    row?.reply_to_message_id ||
+    row?.replyToMessageId ||
+    metadata?.reply_to_message_id ||
+    metadata?.replyToMessageId ||
+    messageContext?.message_id ||
+    messageContext?.id ||
+    contenido?.replyToMessageId ||
+    contenido?.reply_to_message_id ||
+    contenido?.quoted_message_id ||
+    null;
+  const replyToText =
+    metadata?.reply_to_text ||
+    messageContext?.text ||
+    messageContext?.body ||
+    messageContext?.caption ||
+    contenido?.replyToText ||
+    contenido?.reply_to_text ||
+    "";
   const rawText =
     contenido?.text?.body ||
     contenido?.body ||
@@ -1823,6 +2072,8 @@ function normalizeStoredConversationMessage(row) {
     attachmentType,
     source: row?.source || metadata?.source || "database",
     mediaStoragePath: row?.storage_path || metadata?.storage_path || null,
+    replyToMessageId: replyToMessageId ? String(replyToMessageId) : null,
+    replyToText: String(replyToText || "").trim(),
   };
 }
 
@@ -2048,52 +2299,53 @@ async function fetchYCloudConfigById(configId) {
 async function resolveYCloudReplyContext(client, { to, replyToMessageId } = {}) {
   if (!client || !to) return null;
 
-  const phoneVariants = buildConversationPhoneVariants(normalizeConversationPhone(to));
-  const latestInboundQuery = client
-    .from("whatsapp_mensajes_log")
-    .select("message_id, direction, enviado_en")
-    .eq("direction", "inbound")
-    .or(
-      [
-        ...phoneVariants.map((variant) => `telefono_destino.eq.${variant}`),
-        ...phoneVariants.map((variant) => `conversation_key.eq.${variant}`),
-      ].join(",")
-    )
-    .order("enviado_en", { ascending: false })
-    .limit(1);
+  if (!replyToMessageId) return null;
 
-  if (replyToMessageId) {
-    const exactMatch = await runLoggedQuery(
-      "ycloud.reply.context.exact",
-      { to, replyToMessageId },
-      () =>
-        client
-          .from("whatsapp_mensajes_log")
-          .select("message_id, direction, enviado_en")
-          .eq("message_id", replyToMessageId)
-          .maybeSingle()
-    );
-
-    if (!exactMatch.error && exactMatch.data?.message_id) {
-      if (String(exactMatch.data.direction || "").toLowerCase() === "inbound") {
-        return { message_id: exactMatch.data.message_id };
-      }
-    }
-  }
-
-  const latestInbound = await runLoggedQuery(
-    "ycloud.reply.context.latestInbound",
-    { to, replyToMessageId: replyToMessageId || null },
-    () => latestInboundQuery
+  const exactMatch = await runLoggedQuery(
+    "ycloud.reply.context.exact",
+    { to, replyToMessageId },
+    () =>
+      client
+        .from("whatsapp_mensajes_log")
+        .select("message_id, direction, enviado_en, contenido, metadata")
+        .eq("message_id", replyToMessageId)
+        .maybeSingle()
   );
 
-  if (latestInbound.error) {
-    console.warn("No se pudo resolver el contexto de respuesta YCloud:", latestInbound.error.message);
+  if (exactMatch.error) {
+    console.warn("No se pudo resolver el contexto de respuesta YCloud:", exactMatch.error.message);
     return null;
   }
 
-  const messageId = latestInbound.data?.[0]?.message_id || null;
-  return messageId ? { message_id: messageId } : null;
+  if (!exactMatch.data?.message_id) {
+    return null;
+  }
+
+  if (String(exactMatch.data.direction || "").toLowerCase() !== "inbound") {
+    return null;
+  }
+
+  const contenido = exactMatch.data.contenido && typeof exactMatch.data.contenido === "object"
+    ? exactMatch.data.contenido
+    : {};
+  const metadata = exactMatch.data.metadata && typeof exactMatch.data.metadata === "object"
+    ? exactMatch.data.metadata
+    : {};
+  const text =
+    contenido?.text?.body ||
+    contenido?.body ||
+    contenido?.message ||
+    metadata?.messagePayload?.text?.body ||
+    metadata?.messagePayload?.body ||
+    metadata?.messagePayload?.message ||
+    "";
+
+  return {
+    message_id: exactMatch.data.message_id,
+    text: String(text || "").trim(),
+    body: String(text || "").trim(),
+    direction: "inbound",
+  };
 }
 
 function buildYCloudPayload(messageData, config) {
@@ -2205,14 +2457,34 @@ async function sendYCloudMessage(messageData) {
     throw new Error("ConfiguraciÃ³n YCloud no encontrada o inactiva");
   }
 
+  const resolvedTo = normalizeYCloudPhoneNumber(messageData.to || "");
+  if (!resolvedTo) {
+    throw new Error("to es requerido");
+  }
+  if (!/^\+\d{8,15}$/.test(resolvedTo)) {
+    throw new Error(`El número to de YCloud no tiene formato E.164 válido: ${resolvedTo}`);
+  }
+
+  const resolvedFrom = normalizeYCloudPhoneNumber(
+    messageData.from || config.default_from_number || "",
+  );
+  if (!resolvedFrom) {
+    throw new Error("La configuración YCloud no tiene default_from_number y no se recibió from");
+  }
+  if (!/^\+\d{8,15}$/.test(resolvedFrom)) {
+    throw new Error(`El número from de YCloud no tiene formato E.164 válido: ${resolvedFrom}`);
+  }
+
   const client = getSupabaseAdminClient();
   const contextFromDb = await resolveYCloudReplyContext(client, {
-    to: messageData.to,
+    to: resolvedTo,
     replyToMessageId: messageData.replyToMessageId,
   });
   const payload = buildYCloudPayload(
     {
       ...messageData,
+      to: resolvedTo,
+      from: resolvedFrom,
       context: messageData.context || contextFromDb || undefined,
     },
     config
@@ -2229,14 +2501,32 @@ async function sendYCloudMessage(messageData) {
 
   const responseData = await response.json();
   if (!response.ok) {
-    throw new Error(
-      `YCloud API Error ${response.status}: ${
-        responseData.error?.message || response.statusText
-      }`
-    );
+    const ycloudError =
+      responseData?.error?.whatsappApiError?.message ||
+      responseData?.error?.message ||
+      responseData?.error?.details ||
+      responseData?.message ||
+      response.statusText ||
+      "YCloud request failed";
+
+    console.error("[YCLOUD] sendDirectly failed", {
+      status: response.status,
+      error: responseData?.error || responseData,
+      payload: {
+        to: payload.to,
+        from: payload.from,
+        type: payload.type,
+        hasContext: !!payload.context,
+      },
+    });
+
+    throw new Error(`YCloud API Error ${response.status}: ${ycloudError}`);
   }
 
-  return responseData;
+  return {
+    ...responseData,
+    __payload: payload,
+  };
 }
 
 async function fetchWhatsAppCredentials() {
@@ -2307,11 +2597,15 @@ function buildFallbackWhatsappLogRows(row) {
     tipo_mensaje: row?.tipo_mensaje || "text",
     contenido: row?.contenido || {},
     message_id: row?.message_id || null,
+    wamid: row?.wamid || null,
     estado: row?.estado || "enviado",
     error_mensaje: row?.error_mensaje || null,
     metadata: row?.metadata || {},
     enviado_por: row?.enviado_por || null,
     enviado_en: row?.enviado_en || new Date().toISOString(),
+    reply_to_message_id: row?.reply_to_message_id || null,
+    reply_to_text: row?.reply_to_text || null,
+    reply_to_direction: row?.reply_to_direction || null,
   };
 
   return [
@@ -2326,6 +2620,10 @@ function buildFallbackWhatsappLogRows(row) {
       attachment_mime_type: row?.attachment_mime_type || null,
       storage_bucket: row?.storage_bucket || "whatsapp-media",
       storage_path: row?.storage_path || null,
+      wamid: row?.wamid || null,
+      reply_to_message_id: row?.reply_to_message_id || null,
+      reply_to_text: row?.reply_to_text || null,
+      reply_to_direction: row?.reply_to_direction || null,
     },
     {
       ...baseRow,
@@ -2333,6 +2631,10 @@ function buildFallbackWhatsappLogRows(row) {
       direction: row?.direction || "outbound",
       source: row?.source || "ycloud",
       conversation_key: row?.conversation_key || normalizeConversationPhone(row?.telefono_destino || ""),
+      wamid: row?.wamid || null,
+      reply_to_message_id: row?.reply_to_message_id || null,
+      reply_to_text: row?.reply_to_text || null,
+      reply_to_direction: row?.reply_to_direction || null,
     },
     baseRow,
   ];
@@ -2357,6 +2659,9 @@ async function logWhatsAppMessageViaRpc(client, row) {
       attachment_mime_type: row?.attachment_mime_type || null,
       storage_bucket: row?.storage_bucket || null,
       storage_path: row?.storage_path || null,
+      reply_to_message_id: row?.reply_to_message_id || null,
+      reply_to_text: row?.reply_to_text || null,
+      reply_to_direction: row?.reply_to_direction || null,
     },
   };
 
@@ -2405,6 +2710,23 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
   if (!client) return { logInserted: false, logError: null };
 
   try {
+    const { metadata: extraMetadataInput, ...extraRow } = extra || {};
+    const extraMetadata = extraMetadataInput && typeof extraMetadataInput === "object" ? extraMetadataInput : {};
+    const replyContext = reqBody?.context && typeof reqBody.context === "object" ? reqBody.context : null;
+    const resolvedReplyContext =
+      reqBody?.replyToMessageId
+        ? await resolveYCloudReplyContext(client, {
+            to: reqBody?.to || null,
+            replyToMessageId: reqBody.replyToMessageId,
+          })
+        : null;
+    const replyText =
+      extraMetadata.reply_to_text ||
+      resolvedReplyContext?.body ||
+      resolvedReplyContext?.text ||
+      replyContext?.body ||
+      replyContext?.text ||
+      null;
     const logResult = await logWhatsAppMessage(client, {
       telefono_destino: normalizeStoredPhone(reqBody?.to || null),
       tipo_mensaje: reqBody?.type || "text",
@@ -2412,17 +2734,29 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
       estado: "enviado",
       enviado_en: new Date().toISOString(),
       message_id: data?.messages?.[0]?.id || data?.id || null,
+      wamid: data?.messages?.[0]?.id || data?.id || null,
       direction: "outbound",
       source: "ycloud",
       conversation_key: normalizeConversationPhone(reqBody?.to || ""),
       configuracion_id: reqBody?.configId || null,
+      reply_to_message_id: reqBody?.replyToMessageId || null,
+      reply_to_text: replyText,
+      reply_to_direction: resolvedReplyContext?.direction || replyContext?.direction || null,
       metadata: {
         direction: "outbound",
         source: "ycloud",
         to: reqBody?.to || null,
-        ...extra.metadata,
+        reply_to_message_id: reqBody?.replyToMessageId || null,
+        reply_to_text: replyText,
+        reply_to_direction:
+          extraMetadata.reply_to_direction ||
+          resolvedReplyContext?.direction ||
+          replyContext?.direction ||
+          null,
+        context: reqBody?.context || null,
+        ...extraMetadata,
       },
-      ...extra,
+      ...extraRow,
     });
 
     return { logInserted: !!logResult, logError: null };
@@ -3276,7 +3610,19 @@ function registerJsonRoutes(app) {
     try {
       const data = await sendYCloudMessage(req.body || {});
       const client = getSupabaseAdminClient();
-      const { logInserted, logError } = await logYCloudOutboundMessage(client, req.body || {}, data);
+      const payloadContext = data?.__payload?.context || req.body?.context || null;
+      const { logInserted, logError } = await logYCloudOutboundMessage(
+        client,
+        req.body || {},
+        data,
+        {
+          metadata: {
+            context: payloadContext,
+            reply_to_text: payloadContext?.body || payloadContext?.text || null,
+            reply_to_direction: payloadContext?.direction || null,
+          },
+        }
+      );
       if (!logInserted) {
         console.warn("[YCLOUD] Mensaje enviado pero no se pudo guardar en whatsapp_mensajes_log:", logError);
       }
@@ -3322,6 +3668,13 @@ function registerJsonRoutes(app) {
           },
         },
         data,
+        {
+          metadata: {
+            context: data?.__payload?.context || null,
+            reply_to_text: data?.__payload?.context?.body || data?.__payload?.context?.text || null,
+            reply_to_direction: data?.__payload?.context?.direction || null,
+          },
+        },
       );
       if (!logInserted) {
         console.warn("[YCLOUD] Mensaje de prueba enviado pero no se pudo guardar en whatsapp_mensajes_log:", logError);
@@ -3341,7 +3694,7 @@ function registerJsonRoutes(app) {
 
   app.post("/api/ycloud/conversation", async (req, res) => {
     try {
-      const { depositId, phoneNumber, startDate, endDate, limit = 50 } = req.body || {};
+      const { depositId, phoneNumber, startDate, endDate, before, limit = 100 } = req.body || {};
       let normalizedPhone = normalizeConversationPhone(phoneNumber);
 
       if (!normalizedPhone && depositId) {
@@ -3357,9 +3710,18 @@ function registerJsonRoutes(app) {
         return res.status(503).json({ success: false, error: "Supabase no está configurado en el backend", messages: [] });
       }
 
-      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+      const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
       const phoneVariants = buildConversationPhoneVariants(normalizedPhone);
-      const storedQuery = client
+      const defaultConversationStartIso = (() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        return d.toISOString();
+      })();
+      const conversationStartIso = startDate || defaultConversationStartIso;
+      const conversationEndIso = endDate || null;
+      const cursorBeforeIso = before || null;
+
+      let storedQuery = client
         .from("whatsapp_mensajes_log")
         .select("*")
         .or(
@@ -3368,11 +3730,17 @@ function registerJsonRoutes(app) {
             ...phoneVariants.map((variant) => `conversation_key.eq.${variant}`),
           ].join(",")
         )
-        .order("enviado_en", { ascending: true })
+        .gte("enviado_en", conversationStartIso)
+        .order("enviado_en", { ascending: false, nullsFirst: false })
         .limit(safeLimit);
 
-      if (startDate) storedQuery.gte("enviado_en", startDate);
-      if (endDate) storedQuery.lte("enviado_en", endDate);
+      if (conversationEndIso) {
+        storedQuery = storedQuery.lte("enviado_en", conversationEndIso);
+      }
+
+      if (cursorBeforeIso) {
+        storedQuery = storedQuery.lt("enviado_en", cursorBeforeIso);
+      }
 
       const storedResult = await runLoggedQuery(
         "whatsapp.conversation.stored",
@@ -3381,6 +3749,9 @@ function registerJsonRoutes(app) {
           phoneVariants,
           limit: safeLimit,
           depositId: depositId || null,
+          startDate: conversationStartIso,
+          endDate: conversationEndIso,
+          before: cursorBeforeIso,
         },
         () => storedQuery
       );
@@ -3407,18 +3778,18 @@ function registerJsonRoutes(app) {
         deduped.push(message);
       }
 
-      deduped.sort((a, b) => {
-        const dateA = new Date(a.timestamp || a.createdAt || 0).getTime();
-        const dateB = new Date(b.timestamp || b.createdAt || 0).getTime();
-        return dateA - dateB;
-      });
+      const getMessageTime = (message) =>
+        new Date(message.timestamp || message.createdAt || 0).getTime();
+
+      const recentMessages = deduped
+        .sort((a, b) => getMessageTime(a) - getMessageTime(b));
 
       res.json({
         success: true,
-        message: `Se encontraron ${deduped.length} mensajes`,
-        messages: deduped,
-        totalCount: deduped.length,
-        filteredCount: deduped.length,
+        message: `Se encontraron ${recentMessages.length} mensajes`,
+        messages: recentMessages,
+        totalCount: recentMessages.length,
+        filteredCount: recentMessages.length,
         sourceSummary: {
           storedCount: storedMessages.length,
           remoteCount: 0,
@@ -3498,6 +3869,8 @@ function registerJsonRoutes(app) {
             to: message?.to || payload?.to || null,
             rawPayload: payload,
             messagePayload: message,
+            context: message?.context || null,
+            reply_to_message_id: message?.context?.message_id || message?.context?.id || null,
             attachment_url: storedMedia?.publicUrl || attachmentUrl || null,
             attachment_path: storedMedia?.path || null,
             attachment_name: storedMedia?.attachmentName || attachmentName || null,
@@ -3966,31 +4339,38 @@ function registerJsonRoutes(app) {
         });
       }
 
+      const duplicateCheckQuery = client
+        .from("depositos")
+        .select(
+          `
+          id,
+          numero_operacion_banco,
+          monto,
+          moneda,
+          fecha_deposito,
+          fecha_registro,
+          estado,
+          sucursal:sucursal_id(nombre),
+          trabajador:trabajador_sucursal_id(nombre),
+          empresa:empresa_id(nombre),
+          banco:banco_id(nombre, abreviatura)
+        `
+        )
+        .eq("monto", monto)
+        .eq("moneda", moneda)
+        .eq("estado", "validado");
+
+      const normalizedExcludeId =
+        typeof excludeId === "string" && excludeId.trim() ? excludeId.trim() : null;
+
+      if (normalizedExcludeId) {
+        duplicateCheckQuery.neq("id", normalizedExcludeId);
+      }
+
       const { data, error } = await runLoggedQuery(
         "depositos.duplicateCheck",
-        { monto, moneda, numero_operacion_banco, excludeId },
-        () =>
-          client
-            .from("depositos")
-            .select(
-              `
-              id,
-              numero_operacion_banco,
-              monto,
-              moneda,
-              fecha_deposito,
-              fecha_registro,
-              estado,
-              sucursal:sucursal_id(nombre),
-              trabajador:trabajador_sucursal_id(nombre),
-              empresa:empresa_id(nombre),
-              banco:banco_id(nombre, abreviatura)
-            `
-            )
-            .eq("monto", monto)
-            .eq("moneda", moneda)
-            .eq("estado", "validado")
-            .neq("id", excludeId)
+        { monto, moneda, numero_operacion_banco, excludeId: normalizedExcludeId },
+        () => duplicateCheckQuery
       );
 
       if (error) throw error;
@@ -4700,17 +5080,36 @@ function registerJsonRoutes(app) {
   app.post("/api/depositos", async (req, res) => {
     try {
       const client = getSupabaseAdminClient();
+      const body = req.body || {};
+      const {
+        imagen_recortada_data_url,
+        imagen_recortada_name,
+        ...depositPayload
+      } = body;
+
+      if (imagen_recortada_data_url) {
+        const uploadedImage = await uploadDepositCroppedImageToStorage(client, imagen_recortada_data_url, {
+          depositId: depositPayload?.id || "",
+          numeroOperacion: depositPayload?.numero_operacion_banco || depositPayload?.numero_operacion || "",
+          fileName: imagen_recortada_name || "imagen_recortada",
+        });
+
+        if (uploadedImage?.publicUrl) {
+          depositPayload.imagen_voucher = uploadedImage.publicUrl;
+        }
+      }
+
       const { data, error } = await runLoggedQuery(
         "depositos.create",
-        { keys: Object.keys(req.body || {}) },
+        { keys: Object.keys(depositPayload || {}) },
         () =>
           client
             .from("depositos")
-            .insert(req.body || {})
+            .insert(depositPayload || {})
             .select(
               `id, numero_operacion, cliente, monto, fecha_registro, fecha_solo_date, imagen_voucher, anexo, numero_operacion_banco, fecha_deposito, estado, observaciones, motivo_rechazo, fecha_validacion, referencia_cliente, validado_por, moneda, ruc_cliente, telefono_origen, chatwoot_message_id, es_antiguo,
-  empresa:empresa_id (id, nombre, estado, abreviatura),
-  banco:banco_id (id, abreviatura, estado),
+   empresa:empresa_id (id, nombre, estado, abreviatura),
+   banco:banco_id (id, abreviatura, estado),
   sucursal:sucursal_id (id, nombre),
   trabajador:trabajador_sucursal_id (id, nombre, telefono_origen),
   validado_por_usuario:validado_por (id, nombre)`
@@ -4723,6 +5122,23 @@ function registerJsonRoutes(app) {
       });
       res.status(201).json({ data });
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/ai/extract-voucher", async (req, res) => {
+    try {
+      const { imageDataUrl } = req.body || {};
+      if (!imageDataUrl) {
+        return res.status(400).json({ error: "imageDataUrl es requerido" });
+      }
+
+      const extracted = await extractVoucherDataWithOpenAI(imageDataUrl);
+      res.json({ data: extracted });
+    } catch (error) {
+      console.error("[API] ERROR /api/ai/extract-voucher", {
+        message: error.message,
+      });
       res.status(500).json({ error: error.message });
     }
   });
@@ -5729,12 +6145,14 @@ function handleRealtimeWorkerMessage(message) {
 }
 
 export function startDepositRealtimeHub() {
+  loadLocalEnv();
+
   if (realtimeWorker?.connected) {
     return true;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl = getEnv("SUPABASE_URL");
+  const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
     console.warn(
       "Backend realtime desactivado: faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY"

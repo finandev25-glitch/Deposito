@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import DepositCard from "./DepositCard";
 import DepositDetailModal from "./DepositDetailModal";
 import ContactosModal from "./ContactosModal";
+import DailyAttendanceSummary from "./DailyAttendanceSummary";
 import {
   Search,
   ChevronRight,
@@ -18,6 +19,7 @@ import {
   MessageCircle,
   ToggleLeft,
   ToggleRight,
+  X,
 } from "lucide-react";
 import { AuthContext } from "../contexts/AuthContext.jsx";
 import { toLocalISOString } from "../utils/dateFormatters";
@@ -719,66 +721,94 @@ const KanbanView = ({
       <div className="h-full p-6 flex flex-col bg-gray-50 dark:bg-gray-950">
         {/* Header con título y botones en la misma línea */}
         <div className="flex flex-col gap-3 mb-4 flex-shrink-0">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
               Kanban de Depósitos
             </h2>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {showConnectionStatus && connectionStatus && (
-                <div className="rounded-full border border-gray-200 bg-white/80 px-3 py-2 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/80">
-                  <ConnectionIndicator
-                    supabaseConnected={connectionStatus.supabaseConnected}
-                    realtimeStatus={connectionStatus.realtimeStatus}
-                    realtimeErrors={connectionStatus.realtimeErrors}
-                  />
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setReplyToWhatsAppMessages((prev) => !prev)}
-                className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm transition-colors ${
-                  replyToWhatsAppMessages
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
-                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-gray-900 dark:text-slate-200 dark:hover:bg-gray-800"
-                }`}
-                title={
-                  replyToWhatsAppMessages
-                    ? "Responder a mensajes de WhatsApp cuando sea posible"
-                    : "Enviar mensajes nuevos en lugar de responder al hilo"
-                }
-              >
-                {replyToWhatsAppMessages ? (
-                  <ToggleRight className="h-5 w-5" />
-                ) : (
-                  <ToggleLeft className="h-5 w-5" />
-                )}
-                <span className="hidden sm:inline">
-                  {replyToWhatsAppMessages ? "Responder On" : "Responder Off"}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setShowContactosModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
-                title="Ver todos los contactos"
-              >
-                <MessageCircle size={18} />
-                <span className="hidden sm:inline">Contactos</span>
-              </button>
-            </div>
+            {!isCompactKanban && showConnectionStatus && connectionStatus && (
+              <div className="ml-auto rounded-full border border-gray-200 bg-white/80 px-3 py-2 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/80">
+                <ConnectionIndicator
+                  supabaseConnected={connectionStatus.supabaseConnected}
+                  realtimeStatus={connectionStatus.realtimeStatus}
+                  realtimeErrors={connectionStatus.realtimeErrors}
+                />
+              </div>
+            )}
           </div>
 
-          {attendedUsersSummary.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
+          {!isCompactKanban && attendedUsersSummary.length > 0 && (
+            <div className="lg:hidden flex items-center gap-2">
+              <div className="min-w-0 flex-1 overflow-x-auto pb-1">
+                <DailyAttendanceSummary
+                  selectedDate={specificDate}
+                  items={attendedUsersSummary}
+                  compact
+                  showLabel={false}
+                  selectedKey={selectedValidatorFilter?.key}
+                  onItemClick={handleValidatorFilterToggle}
+                  className="w-max"
+                />
+              </div>
+
+              <div className="flex shrink-0 items-center gap-1.5">
+                {selectedValidatorFilter && (
+                  <button
+                    type="button"
+                    onClick={clearValidatorFilter}
+                    className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 p-2 text-red-700 shadow-sm transition-colors hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/50"
+                    title={`Limpiar filtro: ${selectedValidatorFilter.name}`}
+                    aria-label={`Limpiar filtro de ${selectedValidatorFilter.name}`}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setReplyToWhatsAppMessages((prev) => !prev)}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold shadow-sm transition-colors ${
+                    replyToWhatsAppMessages
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-gray-900 dark:text-slate-200 dark:hover:bg-gray-800"
+                  }`}
+                  title={
+                    replyToWhatsAppMessages
+                      ? "Responder a mensajes de WhatsApp cuando sea posible"
+                      : "Enviar mensajes nuevos en lugar de responder al hilo"
+                  }
+                >
+                  {replyToWhatsAppMessages ? (
+                    <ToggleRight className="h-4 w-4" />
+                  ) : (
+                    <ToggleLeft className="h-4 w-4" />
+                  )}
+                  <span className="hidden sm:inline">
+                    {replyToWhatsAppMessages ? "Responder On" : "Responder Off"}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setShowContactosModal(true)}
+                  className="flex items-center gap-2 rounded-lg bg-green-500 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-green-600"
+                  title="Ver todos los contactos"
+                >
+                  <MessageCircle size={16} />
+                  <span className="hidden sm:inline">Contactos</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isCompactKanban && attendedUsersSummary.length > 0 && (
+            <div className="hidden flex-wrap items-center gap-2 lg:flex">
               {attendedUsersSummary.map((user) => (
                 <button
                   key={user.key}
                   type="button"
                   onClick={() => handleValidatorFilterToggle(user)}
                   aria-pressed={selectedValidatorFilter?.key === user.key}
-                  className={`flex items-center gap-2 rounded-full border px-2 py-1 shadow-sm backdrop-blur transition-all ${
+                  className={`flex min-w-0 flex-col items-center rounded-xl border px-2 py-1 shadow-sm backdrop-blur transition-all ${
                     selectedValidatorFilter?.key === user.key
                       ? "alarm-flash border-red-600 bg-red-100 text-slate-900 shadow-lg shadow-red-500/30 dark:border-red-500 dark:bg-red-200 dark:text-slate-900"
                       : "border-slate-200 bg-white/90 hover:border-red-300 hover:bg-red-50 dark:border-slate-700 dark:bg-gray-900/90 dark:hover:border-red-700 dark:hover:bg-red-950/20"
@@ -792,28 +822,11 @@ const KanbanView = ({
                         : "from-slate-800 to-slate-600 text-white dark:from-slate-100 dark:to-slate-300 dark:text-slate-900"
                     } text-[11px] font-bold`}
                   >
-                    {getUserInitials(user.name)}
+                    {user.count}
                   </div>
-                  <div className="pr-1">
-                    <div
-                      className={`max-w-[10rem] truncate text-xs font-semibold ${
-                        selectedValidatorFilter?.key === user.key
-                          ? "text-slate-900"
-                          : "text-slate-700 dark:text-slate-200"
-                      }`}
-                    >
-                      {user.name}
-                    </div>
-                    <div
-                      className={`text-[10px] font-medium uppercase tracking-[0.14em] ${
-                        selectedValidatorFilter?.key === user.key
-                          ? "text-slate-800"
-                          : "text-slate-500 dark:text-slate-400"
-                      }`}
-                    >
-                      {user.count} atendido{user.count === 1 ? "" : "s"}
-                    </div>
-                  </div>
+                  <span className="mt-1 max-w-20 truncate text-[10px] font-medium leading-tight text-gray-600 dark:text-gray-300">
+                    {user.name}
+                  </span>
                 </button>
               ))}
               {selectedValidatorFilter && (
@@ -828,12 +841,84 @@ const KanbanView = ({
                   </span>
                 </button>
               )}
+
+              <div className="ml-auto flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setReplyToWhatsAppMessages((prev) => !prev)}
+                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm transition-colors ${
+                    replyToWhatsAppMessages
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-gray-900 dark:text-slate-200 dark:hover:bg-gray-800"
+                  }`}
+                  title={
+                    replyToWhatsAppMessages
+                      ? "Responder a mensajes de WhatsApp cuando sea posible"
+                      : "Enviar mensajes nuevos en lugar de responder al hilo"
+                  }
+                >
+                  {replyToWhatsAppMessages ? (
+                    <ToggleRight className="h-5 w-5" />
+                  ) : (
+                    <ToggleLeft className="h-5 w-5" />
+                  )}
+                  <span className="hidden sm:inline">
+                    {replyToWhatsAppMessages ? "Responder On" : "Responder Off"}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setShowContactosModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
+                  title="Ver todos los contactos"
+                >
+                  <MessageCircle size={18} />
+                  <span className="hidden sm:inline">Contactos</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
 
         {/* Filtros y búsqueda en una segunda línea */}
-        <div className="flex flex-wrap items-center gap-4 mb-6 flex-shrink-0">
+        <div className="mb-6 flex flex-nowrap items-center gap-2 overflow-hidden flex-shrink-0 lg:hidden">
+          <div className="relative w-[38%] min-w-[112px] shrink-0">
+            <Calendar
+              size={12}
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            />
+            <input
+              type="date"
+              value={specificDate}
+              onChange={(e) => {
+                const newDate = e.target.value;
+                console.log("📅 INPUT: Usuario seleccionó fecha:", newDate);
+                setFilterDateOption("specific");
+                setSpecificDate(newDate);
+                if (onSelectDate) {
+                  onSelectDate(newDate || null);
+                }
+              }}
+              className="w-full min-w-0 pl-9 pr-2 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            />
+          </div>
+
+          <div className="relative min-w-0 flex-1">
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            />
+            <input
+              type="text"
+              placeholder="Buscar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full min-w-0 pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-blue-500 dark:focus:border-blue-400 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            />
+          </div>
+        </div>
+
+        <div className="hidden flex-wrap items-center gap-4 mb-6 flex-shrink-0 lg:flex">
           {isCompactKanban ? (
             <>
               <div className="relative">
