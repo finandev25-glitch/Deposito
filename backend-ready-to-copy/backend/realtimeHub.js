@@ -1909,6 +1909,21 @@ function extractConversationMessages(payload) {
   return [payload];
 }
 
+function extractWebhookMessageId(message, payload) {
+  const rawPayload = message?.rawPayload || payload?.rawPayload || payload || {};
+  return (
+    message?.whatsappInboundMessage?.id ||
+    message?.whatsappInboundMessageId ||
+    rawPayload?.whatsappInboundMessage?.id ||
+    rawPayload?.whatsappInboundMessageId ||
+    message?.id ||
+    message?.message_id ||
+    message?.externalId ||
+    payload?.messageId ||
+    null
+  );
+}
+
 function extractWebhookPhoneNumber(message, payload) {
   const candidates = [
     message?.from,
@@ -2307,7 +2322,7 @@ async function resolveYCloudReplyContext(client, { to, replyToMessageId } = {}) 
     () =>
       client
         .from("whatsapp_mensajes_log")
-        .select("message_id, direction, enviado_en, contenido, metadata")
+        .select("message_id, wamid, direction, enviado_en, contenido, metadata")
         .eq("message_id", replyToMessageId)
         .maybeSingle()
   );
@@ -2342,6 +2357,7 @@ async function resolveYCloudReplyContext(client, { to, replyToMessageId } = {}) 
 
   return {
     message_id: exactMatch.data.message_id,
+    wamid: exactMatch.data.wamid || exactMatch.data.message_id,
     text: String(text || "").trim(),
     body: String(text || "").trim(),
     direction: "inbound",
@@ -2444,6 +2460,21 @@ function buildYCloudPayload(messageData, config) {
   if (externalId) payload.externalId = externalId;
 
   return payload;
+}
+
+function extractYCloudWamid(responseData) {
+  const candidate =
+    responseData?.messages?.[0]?.wamid ||
+    responseData?.messages?.[0]?.message_id ||
+    responseData?.messages?.[0]?.messageId ||
+    responseData?.messages?.[0]?.id ||
+    responseData?.wamid ||
+    responseData?.message_id ||
+    responseData?.messageId ||
+    responseData?.id ||
+    null;
+
+  return candidate ? String(candidate) : null;
 }
 
 async function sendYCloudMessage(messageData) {
@@ -2603,9 +2634,6 @@ function buildFallbackWhatsappLogRows(row) {
     metadata: row?.metadata || {},
     enviado_por: row?.enviado_por || null,
     enviado_en: row?.enviado_en || new Date().toISOString(),
-    reply_to_message_id: row?.reply_to_message_id || null,
-    reply_to_text: row?.reply_to_text || null,
-    reply_to_direction: row?.reply_to_direction || null,
   };
 
   return [
@@ -2621,9 +2649,6 @@ function buildFallbackWhatsappLogRows(row) {
       storage_bucket: row?.storage_bucket || "whatsapp-media",
       storage_path: row?.storage_path || null,
       wamid: row?.wamid || null,
-      reply_to_message_id: row?.reply_to_message_id || null,
-      reply_to_text: row?.reply_to_text || null,
-      reply_to_direction: row?.reply_to_direction || null,
     },
     {
       ...baseRow,
@@ -2632,9 +2657,6 @@ function buildFallbackWhatsappLogRows(row) {
       source: row?.source || "ycloud",
       conversation_key: row?.conversation_key || normalizeConversationPhone(row?.telefono_destino || ""),
       wamid: row?.wamid || null,
-      reply_to_message_id: row?.reply_to_message_id || null,
-      reply_to_text: row?.reply_to_text || null,
-      reply_to_direction: row?.reply_to_direction || null,
     },
     baseRow,
   ];
@@ -2673,7 +2695,15 @@ async function logWhatsAppMessageViaRpc(client, row) {
     throw new Error(rpcResult.error.message);
   }
 
-  return rpcResult.data || null;
+  if (rpcResult.data == null) {
+    return null;
+  }
+
+  if (typeof rpcResult.data === "object") {
+    return rpcResult.data;
+  }
+
+  return { id: rpcResult.data };
 }
 
 async function logWhatsAppMessage(client, row) {
@@ -2706,6 +2736,37 @@ async function logWhatsAppMessage(client, row) {
   throw new Error(lastError?.message || "No se pudo registrar el log de WhatsApp");
 }
 
+async function logYCloudOutboundMessageMinimal(client, row) {
+  if (!client) return { logInserted: false, logError: null };
+
+  const payload = {
+    telefono_destino: normalizeStoredPhone(row?.telefono_destino || row?.to || null) || null,
+    tipo_mensaje: row?.tipo_mensaje || "text",
+    contenido: row?.contenido || row || {},
+    estado: row?.estado || "enviado",
+    enviado_en: row?.enviado_en || new Date().toISOString(),
+    message_id: row?.message_id || null,
+    wamid: row?.wamid || row?.message_id || null,
+    direction: row?.direction || "outbound",
+    source: row?.source || "ycloud",
+    conversation_key: row?.conversation_key || normalizeConversationPhone(row?.telefono_destino || row?.to || ""),
+    configuracion_id: row?.configuracion_id || null,
+    metadata: row?.metadata || {},
+  };
+
+  const result = await runLoggedQuery(
+    "whatsapp.messages.log.minimal",
+    payload,
+    () => client.from("whatsapp_mensajes_log").insert(payload).select("*").maybeSingle()
+  );
+
+  if (result.error) {
+    return { logInserted: false, logError: result.error.message };
+  }
+
+  return { logInserted: true, logError: null };
+}
+
 async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
   if (!client) return { logInserted: false, logError: null };
 
@@ -2713,11 +2774,17 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
     const { metadata: extraMetadataInput, ...extraRow } = extra || {};
     const extraMetadata = extraMetadataInput && typeof extraMetadataInput === "object" ? extraMetadataInput : {};
     const replyContext = reqBody?.context && typeof reqBody.context === "object" ? reqBody.context : null;
+    const replyReferenceId =
+      reqBody?.replyToMessageId ||
+      replyContext?.message_id ||
+      replyContext?.wamid ||
+      extraMetadata.reply_to_wamid ||
+      null;
     const resolvedReplyContext =
-      reqBody?.replyToMessageId
+      replyReferenceId
         ? await resolveYCloudReplyContext(client, {
             to: reqBody?.to || null,
-            replyToMessageId: reqBody.replyToMessageId,
+            replyToMessageId: replyReferenceId,
           })
         : null;
     const replyText =
@@ -2727,26 +2794,34 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
       replyContext?.body ||
       replyContext?.text ||
       null;
+    const replyToWamid =
+      extraMetadata.reply_to_wamid ||
+      resolvedReplyContext?.wamid ||
+      resolvedReplyContext?.message_id ||
+      replyContext?.wamid ||
+      replyContext?.message_id ||
+      replyReferenceId ||
+      null;
+    const outboundWamid = extractYCloudWamid(data);
+    const storedWamid = replyReferenceId ? String(replyReferenceId) : outboundWamid;
     const logResult = await logWhatsAppMessage(client, {
       telefono_destino: normalizeStoredPhone(reqBody?.to || null),
       tipo_mensaje: reqBody?.type || "text",
       contenido: reqBody || {},
       estado: "enviado",
       enviado_en: new Date().toISOString(),
-      message_id: data?.messages?.[0]?.id || data?.id || null,
-      wamid: data?.messages?.[0]?.id || data?.id || null,
+      message_id: outboundWamid,
+      wamid: storedWamid,
       direction: "outbound",
       source: "ycloud",
       conversation_key: normalizeConversationPhone(reqBody?.to || ""),
       configuracion_id: reqBody?.configId || null,
-      reply_to_message_id: reqBody?.replyToMessageId || null,
-      reply_to_text: replyText,
-      reply_to_direction: resolvedReplyContext?.direction || replyContext?.direction || null,
       metadata: {
         direction: "outbound",
         source: "ycloud",
         to: reqBody?.to || null,
         reply_to_message_id: reqBody?.replyToMessageId || null,
+        reply_to_wamid: replyToWamid,
         reply_to_text: replyText,
         reply_to_direction:
           extraMetadata.reply_to_direction ||
@@ -2759,10 +2834,36 @@ async function logYCloudOutboundMessage(client, reqBody, data, extra = {}) {
       ...extraRow,
     });
 
-    return { logInserted: !!logResult, logError: null };
+    const logRowId =
+      logResult && typeof logResult === "object"
+        ? logResult.id ?? logResult.logId ?? null
+        : typeof logResult === "number" || typeof logResult === "string"
+          ? logResult
+          : null;
+
+    if (logRowId && replyReferenceId) {
+      const forcedWamid = String(replyReferenceId);
+      const updateResult = await runLoggedQuery(
+        "whatsapp.messages.log.force_reply_wamid",
+        { id: logRowId, wamid: forcedWamid },
+        () =>
+          client
+            .from("whatsapp_mensajes_log")
+            .update({ wamid: forcedWamid })
+            .eq("id", logRowId)
+            .select("id, wamid")
+            .maybeSingle()
+      );
+
+      if (updateResult.error) {
+        console.warn("No se pudo forzar wamid en el log outbound:", updateResult.error.message);
+      }
+    }
+
+    return { logInserted: !!logResult, logError: null, logId: logRowId };
   } catch (error) {
     console.warn("No se pudo persistir el log outbound de YCloud:", error.message);
-    return { logInserted: false, logError: error.message };
+    return { logInserted: false, logError: error.message, logId: null };
   }
 }
 
@@ -3611,6 +3712,11 @@ function registerJsonRoutes(app) {
       const data = await sendYCloudMessage(req.body || {});
       const client = getSupabaseAdminClient();
       const payloadContext = data?.__payload?.context || req.body?.context || null;
+      const replyReferenceId =
+        req.body?.replyToMessageId ||
+        payloadContext?.message_id ||
+        payloadContext?.wamid ||
+        null;
       const { logInserted, logError } = await logYCloudOutboundMessage(
         client,
         req.body || {},
@@ -3618,20 +3724,63 @@ function registerJsonRoutes(app) {
         {
           metadata: {
             context: payloadContext,
+            reply_to_wamid: payloadContext?.wamid || payloadContext?.message_id || null,
             reply_to_text: payloadContext?.body || payloadContext?.text || null,
             reply_to_direction: payloadContext?.direction || null,
           },
         }
       );
-      if (!logInserted) {
-        console.warn("[YCLOUD] Mensaje enviado pero no se pudo guardar en whatsapp_mensajes_log:", logError);
+      let finalLogInserted = logInserted;
+      let finalLogError = logError;
+      if (client && !finalLogInserted) {
+        const fallbackWamid = extractYCloudWamid(data);
+        const minimalFallback = await logYCloudOutboundMessageMinimal(
+          client,
+          {
+            ...req.body,
+            telefono_destino: normalizeStoredPhone(req.body?.to || null),
+            message_id: fallbackWamid,
+            wamid: replyReferenceId ? String(replyReferenceId) : payloadContext?.message_id || payloadContext?.wamid || fallbackWamid,
+            metadata: {
+              ...(req.body?.metadata || {}),
+              context: payloadContext || null,
+              reply_to_wamid: payloadContext?.wamid || payloadContext?.message_id || null,
+              reply_to_text: payloadContext?.body || payloadContext?.text || null,
+              reply_to_direction: payloadContext?.direction || null,
+            },
+          }
+        );
+        finalLogInserted = minimalFallback.logInserted;
+        finalLogError = minimalFallback.logError || finalLogError;
+      } else if (client && finalLogInserted && replyReferenceId) {
+        const forcedWamid = String(replyReferenceId);
+        const lastOutboundId = data?.messages?.[0]?.id || data?.id || null;
+        if (lastOutboundId) {
+          const updateResult = await runLoggedQuery(
+            "whatsapp.messages.log.force_reply_wamid.after_insert",
+            { id: lastOutboundId, wamid: forcedWamid },
+            () =>
+              client
+                .from("whatsapp_mensajes_log")
+                .update({ wamid: forcedWamid })
+                .eq("message_id", lastOutboundId)
+                .select("id, wamid")
+                .maybeSingle()
+          );
+          if (updateResult.error) {
+            console.warn("No se pudo forzar wamid tras el insert outbound:", updateResult.error.message);
+          }
+        }
+      }
+      if (!finalLogInserted) {
+        console.warn("[YCLOUD] Mensaje enviado pero no se pudo guardar en whatsapp_mensajes_log:", finalLogError);
       }
       res.json({
         success: true,
         data,
         message: "Mensaje enviado exitosamente via YCloud",
-        logInserted,
-        logError,
+        logInserted: finalLogInserted,
+        logError: finalLogError,
       });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -3656,6 +3805,7 @@ function registerJsonRoutes(app) {
       });
 
       const client = getSupabaseAdminClient();
+      const replyReferenceId = data?.__payload?.replyToMessageId || data?.__payload?.context?.message_id || data?.__payload?.context?.wamid || null;
       const { logInserted, logError } = await logYCloudOutboundMessage(
         client,
         {
@@ -3671,21 +3821,68 @@ function registerJsonRoutes(app) {
         {
           metadata: {
             context: data?.__payload?.context || null,
+            reply_to_wamid: data?.__payload?.context?.wamid || data?.__payload?.context?.message_id || null,
             reply_to_text: data?.__payload?.context?.body || data?.__payload?.context?.text || null,
             reply_to_direction: data?.__payload?.context?.direction || null,
           },
         },
       );
-      if (!logInserted) {
-        console.warn("[YCLOUD] Mensaje de prueba enviado pero no se pudo guardar en whatsapp_mensajes_log:", logError);
+      let finalLogInserted = logInserted;
+      let finalLogError = logError;
+      if (client && !finalLogInserted) {
+        const fallbackWamid = extractYCloudWamid(data);
+        const minimalFallback = await logYCloudOutboundMessageMinimal(client, {
+          configId,
+          to,
+          type: "text",
+          text: {
+            body: `Mensaje de prueba desde YCloud\n\nHora: ${new Date().toLocaleString()}\nSistema: Backend persistente\nEstado: Conectado correctamente`,
+            previewUrl: false,
+          },
+          telefono_destino: normalizeStoredPhone(to || null),
+          message_id: fallbackWamid,
+          wamid: replyReferenceId
+            ? String(replyReferenceId)
+            : data?.__payload?.context?.message_id || data?.__payload?.context?.wamid || fallbackWamid,
+          metadata: {
+            context: data?.__payload?.context || null,
+            reply_to_wamid: data?.__payload?.context?.wamid || data?.__payload?.context?.message_id || null,
+            reply_to_text: data?.__payload?.context?.body || data?.__payload?.context?.text || null,
+            reply_to_direction: data?.__payload?.context?.direction || null,
+          },
+        });
+        finalLogInserted = minimalFallback.logInserted;
+        finalLogError = minimalFallback.logError || finalLogError;
+      } else if (client && finalLogInserted && replyReferenceId) {
+        const forcedWamid = String(replyReferenceId);
+        const lastOutboundId = data?.messages?.[0]?.id || data?.id || null;
+        if (lastOutboundId) {
+          const updateResult = await runLoggedQuery(
+            "whatsapp.messages.log.force_reply_wamid.test.after_insert",
+            { id: lastOutboundId, wamid: forcedWamid },
+            () =>
+              client
+                .from("whatsapp_mensajes_log")
+                .update({ wamid: forcedWamid })
+                .eq("message_id", lastOutboundId)
+                .select("id, wamid")
+                .maybeSingle()
+          );
+          if (updateResult.error) {
+            console.warn("No se pudo forzar wamid tras el insert outbound de prueba:", updateResult.error.message);
+          }
+        }
+      }
+      if (!finalLogInserted) {
+        console.warn("[YCLOUD] Mensaje de prueba enviado pero no se pudo guardar en whatsapp_mensajes_log:", finalLogError);
       }
 
       res.json({
         success: true,
         data,
         message: "Mensaje de prueba enviado exitosamente",
-        logInserted,
-        logError,
+        logInserted: finalLogInserted,
+        logError: finalLogError,
       });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -3836,7 +4033,7 @@ function registerJsonRoutes(app) {
       for (const message of webhookMessages) {
         const phoneNumber = extractWebhookPhoneNumber(message, payload);
         const { attachmentType, attachmentUrl, attachmentName } = extractWebhookAttachment(message);
-        const messageId = message?.id || message?.message_id || message?.externalId || payload?.messageId || null;
+        const messageId = extractWebhookMessageId(message, payload);
         const receivedAt = message?.createTime || message?.sendTime || message?.timestamp || payload?.timestamp || new Date().toISOString();
 
         let storedMedia = null;
