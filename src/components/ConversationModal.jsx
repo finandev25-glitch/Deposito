@@ -344,8 +344,11 @@ const ConversationModal = ({
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [oldestCursor, setOldestCursor] = useState(null);
   const [latestCursor, setLatestCursor] = useState(null);
+  const [highlightedMessageKey, setHighlightedMessageKey] = useState("");
   const messagesContainerRef = useRef(null);
   const messagesRef = useRef([]);
+  const messageNodeRefs = useRef(new Map());
+  const highlightTimerRef = useRef(null);
   const shouldStickToBottomRef = useRef(true);
 
   const normalizedPhone = useMemo(
@@ -365,6 +368,31 @@ const ConversationModal = ({
     });
     return map;
   }, [messages]);
+
+  const handleReplyReferenceClick = useCallback(
+    (replyToMessageId) => {
+      if (!replyToMessageId) return;
+
+      const target = replyIndex.get(String(replyToMessageId));
+      if (!target) return;
+
+      const targetKey = `message-${getConversationMessageKey(target)}`;
+      const targetNode = messageNodeRefs.current.get(targetKey);
+
+      if (targetNode) {
+        targetNode.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+
+      setHighlightedMessageKey(targetKey);
+      if (highlightTimerRef.current) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+      highlightTimerRef.current = window.setTimeout(() => {
+        setHighlightedMessageKey("");
+      }, 2200);
+    },
+    [replyIndex],
+  );
 
   const timelineItems = useMemo(() => {
     const items = [];
@@ -403,6 +431,14 @@ const ConversationModal = ({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   const loadConversationPage = useCallback(
     async ({
@@ -733,6 +769,13 @@ const ConversationModal = ({
                 return (
                   <div
                     key={item.key}
+                    ref={(node) => {
+                      if (node) {
+                        messageNodeRefs.current.set(item.key, node);
+                      } else {
+                        messageNodeRefs.current.delete(item.key);
+                      }
+                    }}
                     className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}
                     style={{
                       contentVisibility: "auto",
@@ -742,7 +785,11 @@ const ConversationModal = ({
                     <div
                       className={`relative max-w-[90%] rounded-2xl px-4 py-3 text-sm transition-all duration-200 ${
                         isExpanded ? "scale-[1.3] z-20" : ""
-                      } ${bubbleStyle} ${hasReplyContext ? "ring-1 ring-emerald-200/70 border-l-4 border-l-emerald-500" : ""}`}
+                      } ${bubbleStyle} ${
+                        hasReplyContext ? "ring-1 ring-emerald-200/70 border-l-4 border-l-emerald-500" : ""
+                      } ${
+                        highlightedMessageKey === item.key ? "ring-2 ring-amber-400 border-amber-400 shadow-lg" : ""
+                      }`}
                       style={
                         isOutbound
                           ? {
@@ -786,7 +833,12 @@ const ConversationModal = ({
                       </div>
 
                       {hasReplyContext ? (
-                        <div className="mt-2 overflow-hidden rounded-xl border border-emerald-200 bg-white/95 text-[11px] leading-4 text-emerald-950 shadow-sm dark:border-emerald-900/40 dark:bg-gray-950/80 dark:text-emerald-50">
+                        <button
+                          type="button"
+                          onClick={() => handleReplyReferenceClick(message.replyToMessageId)}
+                          className="mt-2 w-full overflow-hidden rounded-xl border border-emerald-200 bg-white/95 text-left text-[11px] leading-4 text-emerald-950 shadow-sm transition-colors hover:bg-emerald-50/80 dark:border-emerald-900/40 dark:bg-gray-950/80 dark:text-emerald-50 dark:hover:bg-gray-900/90"
+                          title="Ir al mensaje al que responde"
+                        >
                           <div className="flex items-center gap-1 border-b border-emerald-100 px-3 py-1.5 font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:border-emerald-900/40 dark:text-emerald-300">
                             <Reply className="h-3 w-3" />
                             <span>Respuesta a {replyAuthorLabel}</span>
@@ -796,7 +848,7 @@ const ConversationModal = ({
                               {replyPreview || "Mensaje original no cargado en este tramo del historial"}
                             </p>
                           </div>
-                        </div>
+                        </button>
                       ) : null}
 
                       {topText ? (

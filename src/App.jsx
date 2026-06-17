@@ -452,6 +452,7 @@ function App({ uiMode = "default" }) {
             voucherUrl={voucherPanelState.voucherUrl}
             depositData={voucherPanelState.depositData}
             onClose={handleCloseVoucherPanel}
+            forceLight={isExtensionMode}
           />
 
           <FloatingDepositMetaOverlay

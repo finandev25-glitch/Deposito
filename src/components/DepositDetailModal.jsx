@@ -1009,7 +1009,7 @@ ${reason}`;
     closeSqlMovementsModal();
   }, [applySqlMovementSelectionToDeposit, closeSqlMovementsModal]);
 
-  const persistSelectedSqlTipoIfNeeded = useCallback(async () => {
+  const persistSelectedSqlTipoIfNeeded = useCallback(async (traceLabel = "sql.persist") => {
     if (!sqlSelectedMovementId) {
       return null;
     }
@@ -1031,11 +1031,15 @@ ${reason}`;
       throw new Error("Selecciona una empresa válida en el modal Detalle depósito.");
     }
 
+    console.timeLog(traceLabel, "iniciando actualización SQL CONCAR");
     const response = await apiPost("/sqlserver/cortado-asignar-tipo", {
       empresa,
       empresaNombre,
       id: sqlSelectedMovementId,
       tipo,
+    });
+    console.timeLog(traceLabel, "respuesta SQL CONCAR recibida", {
+      tipo: response?.data?.tipo || tipo,
     });
 
     const updatedTipo = response?.data?.tipo || tipo;
@@ -1057,8 +1061,9 @@ ${reason}`;
           }
         : prev,
     );
+    console.timeLog(traceLabel, "estado local actualizado");
     return response;
-  }, [deposit, isBackendConnected, sqlSelectedMovementId]);
+  }, [deposit, editableData.empresa_id, empresas, isBackendConnected, sqlSelectedMovementId]);
 
   const sqlActiveVoucherUrl = useMemo(() => {
     const selectedMovementVoucher =
@@ -1657,6 +1662,13 @@ ${reason}`;
     if (isProcessing) return; // Evitar múltiples clics
 
     setIsProcessing(true);
+    const trace = `deposit.revision:${deposit.id}`;
+    console.time(trace);
+    console.log("▶️ Inicio flujo revisión/antiguo", {
+      depositId: deposit.id,
+      estadoActual: deposit.estado,
+      esAntiguoActual: deposit.es_antiguo,
+    });
     const newValue = !deposit.es_antiguo;
     console.log("🏷️ Cambiando marca de antiguo:", {
       depositId: deposit.id,
@@ -1718,10 +1730,17 @@ Gracias por su comprensión.`;
             deposit.trabajador?.telefono_origen || deposit.sucursal?.telefono;
 
           if (telefonoContacto) {
+            console.timeLog(trace, "teléfono resuelto");
             const telefonoFormateado = formatPhoneForYCloud(telefonoContacto);
 
             const replyMessageId = getReplyMessageIdFromDeposit(deposit);
+            console.log("📤 Payload revisión", {
+              to: telefonoFormateado,
+              replyToMessageId: replyMessageId || null,
+              configId: yCloudConfigId,
+            });
 
+            console.timeLog(trace, "enviando a YCloud");
             const result = await yCloudService.sendTextMessage(
               buildYCloudMessagePayload({
                 configId: yCloudConfigId,
@@ -1731,8 +1750,13 @@ Gracias por su comprensión.`;
                 forceReply: true,
               }),
             );
+            console.timeLog(trace, "respuesta YCloud", {
+              success: result.success,
+              messageId: result.data?.id || null,
+            });
 
             if (result.success) {
+              console.timeEnd(trace);
               console.log(
                 "✅ Mensaje de depósito antiguo enviado:",
                 result.data?.id,
@@ -1742,6 +1766,7 @@ Gracias por su comprensión.`;
               );
               alert(`✅ Mensaje enviado:\n\n${mensajeAntiguo}`);
             } else {
+              console.timeEnd(trace);
               console.warn(
                 "⚠️ No se pudo enviar mensaje de depósito antiguo:",
                 result.message,
@@ -1749,6 +1774,7 @@ Gracias por su comprensión.`;
               alert(`⚠️ No se pudo enviar el mensaje:\n${result.message}`);
             }
           } else {
+            console.timeEnd(trace);
             console.warn(
               "⚠️ No hay teléfono disponible para enviar mensaje de depósito antiguo",
             );
@@ -1757,6 +1783,7 @@ Gracias por su comprensión.`;
             );
           }
         } catch (error) {
+          console.timeEnd(trace);
           console.warn("❌ Error enviando mensaje de depósito antiguo:", error);
           alert(`❌ Error al enviar mensaje:\n${error.message}`);
         }
@@ -1779,6 +1806,8 @@ Gracias por su comprensión.`;
     if (isProcessing) return; // Evitar múltiples clics
 
     setIsProcessing(true);
+    const trace = `deposit.reject:${deposit.id}:${mode}`;
+    console.time(trace);
     console.log(
       `❌ Rechazando depósito (${mode === "link" ? "link" : "YCloud"}) - NO se requiere validación de campos`,
       {
@@ -1803,6 +1832,7 @@ Gracias por su comprensión.`;
 
     // Enviar mensaje de rechazo si hay configuración o abrir link de WhatsApp
     if (mode === "link") {
+      console.timeEnd(trace);
       const linkOpened = openWhatsAppMessageLink(
         telefonoContacto,
         mensajeRechazo,
@@ -1818,51 +1848,71 @@ Gracias por su comprensión.`;
           "⚠️ Depósito rechazado, pero no se pudo abrir WhatsApp (sin teléfono).",
         );
       }
-    } else if (yCloudConfigId) {
+    } else {
       try {
+        console.timeLog(trace, "resolviendo configuración YCloud");
+        const activeYCloudConfigId = await resolveActiveYCloudConfigId();
+        console.timeLog(trace, "configuración resuelta", { activeYCloudConfigId });
+
         console.log("📱 Enviando rechazo:", {
-          configId: yCloudConfigId,
+          configId: activeYCloudConfigId || yCloudConfigId,
         });
 
-        if (telefonoContacto) {
+        if (activeYCloudConfigId && telefonoContacto) {
           const telefonoFormateado = formatPhoneForYCloud(telefonoContacto);
           const replyMessageId = getReplyMessageIdFromDeposit(deposit);
+          console.log("📤 Payload rechazo", {
+            to: telefonoFormateado,
+            replyToMessageId: replyMessageId || null,
+            configId: activeYCloudConfigId,
+          });
 
+          console.timeLog(trace, "enviando a YCloud");
           const result = await yCloudService.sendTextMessage(
             buildYCloudMessagePayload({
-              configId: yCloudConfigId,
+              configId: activeYCloudConfigId,
               to: telefonoFormateado,
               text: mensajeRechazo,
               replyMessageId,
               forceReply: true,
             }),
           );
+          console.timeLog(trace, "respuesta YCloud", {
+            success: result.success,
+            messageId: result.data?.id || null,
+          });
 
           if (result.success) {
+            console.timeEnd(trace);
             console.log(
               "✅ Rechazo enviado:",
               result.data?.id,
               replyMessageId ? "(como respuesta)" : "(sin mensaje para responder)",
+              result.logInserted ? "(guardado en whatsapp_mensajes_log)" : "(sin log confirmado)",
             );
             alert(`✅ Rechazo enviado:\n\n${mensajeRechazo}`);
           } else {
+            console.timeEnd(trace);
             console.warn("⚠️ No se pudo enviar rechazo:", result.message);
             alert(`⚠️ No se pudo enviar el rechazo:\n${result.message}`);
           }
         } else {
-          console.warn(
-            "⚠️ No hay teléfono disponible para enviar mensaje de rechazo",
-          );
+          console.timeEnd(trace);
+          if (!activeYCloudConfigId) {
+            console.warn("⚠️ No hay configuración activa de YCloud para enviar el rechazo");
+          }
+          if (!telefonoContacto) {
+            console.warn("⚠️ No hay teléfono disponible para enviar mensaje de rechazo");
+          }
           alert(
-            "⚠️ Depósito rechazado, pero no se pudo enviar mensaje (sin teléfono).",
+            "⚠️ Depósito rechazado, pero no se pudo enviar mensaje (sin configuración activa o sin teléfono).",
           );
         }
       } catch (error) {
+        console.timeEnd(trace);
         console.warn("❌ Error enviando rechazo:", error);
         alert(`❌ Error al enviar rechazo:\n${error.message}`);
       }
-    } else {
-      console.warn("⚠️ No se envió mensaje de rechazo - Falta configuración");
     }
 
     // Actualizar el depósito con el payload final preservando las relaciones
@@ -1921,7 +1971,16 @@ Gracias por su comprensión.`;
   };
 
   const handleConfirmDepositWithMessage = async () => {
+    const trace = `deposit.confirm:${deposit.id}`;
+    console.time(trace);
+    if (!checkResult.checked) {
+      console.timeEnd(trace);
+      alert("Primero debes comprobar duplicados y confirmar que no hay duplicados.");
+      return;
+    }
+
     if (checkResult.isDuplicate) {
+      console.timeEnd(trace);
       alert("No puedes confirmar mientras el depósito esté marcado como duplicado.");
       return;
     }
@@ -1983,6 +2042,7 @@ Gracias por su comprensión.`;
 
     // Si faltan campos, mostrar error y no continuar
     if (camposRequeridos.length > 0) {
+      console.timeEnd(trace);
       const mensaje = `Por favor, complete los siguientes campos requeridos: ${camposRequeridos.join(
         ", ",
       )}`;
@@ -1991,14 +2051,6 @@ Gracias por su comprensión.`;
         camposRequeridos,
         editableData,
       });
-      return;
-    }
-
-    try {
-      await persistSelectedSqlTipoIfNeeded();
-    } catch (error) {
-      console.error("❌ Error aplicando el ID SQL antes de confirmar:", error);
-      alert(`❌ No se pudo aplicar el ID seleccionado en SQL: ${error.message}`);
       return;
     }
 
@@ -2014,6 +2066,7 @@ Gracias por su comprensión.`;
       tieneConfig: !!yCloudConfigId,
       tieneTelefono: !!telefonoDisponible,
     });
+    console.timeLog(trace, "validación completada");
 
     const payload = buildUpdatePayload({
       estado: "validado",
@@ -2046,7 +2099,9 @@ Gracias por su comprensión.`;
         ...payload,
       });
 
+      console.timeLog(trace, "resolviendo configuración YCloud");
       const activeYCloudConfigId = await resolveActiveYCloudConfigId();
+      console.timeLog(trace, "configuración resuelta", { activeYCloudConfigId });
 
       // Intentar enviar mensaje solo si es posible
       if (activeYCloudConfigId && telefonoDisponible && empresa && banco) {
@@ -2058,6 +2113,7 @@ Gracias por su comprensión.`;
           moneda: editableData.moneda,
           monto: editableData.monto,
         });
+        console.timeLog(trace, "mensaje armado", { length: mensajeConfirmacion.length });
 
         const telefonoFormateado = formatPhoneForYCloud(telefonoDisponible);
 
@@ -2077,10 +2133,20 @@ Gracias por su comprensión.`;
         });
 
         // Enviar mensaje (como respuesta al mensaje original si existe chatwoot_message_id)
+        console.timeLog(trace, "enviando a YCloud");
         const result = await yCloudService.sendTextMessage(yCloudPayload);
+        console.timeLog(trace, "respuesta YCloud", {
+          success: result.success,
+          messageId: result.data?.id || null,
+        });
 
         if (result.success) {
           console.log("✅ Mensaje enviado:", result.data?.id);
+          void persistSelectedSqlTipoIfNeeded(trace)
+            .then(() => console.log("🗃️ SQL post-confirmación completado"))
+            .catch((error) => {
+              console.error("❌ Error aplicando el ID SQL después de confirmar:", error);
+            });
           alert("✅ Depósito confirmado y mensaje enviado exitosamente");
         } else {
           console.warn("⚠️ Error enviando mensaje:", result.message);
@@ -2089,6 +2155,7 @@ Gracias por su comprensión.`;
           );
         }
       } else {
+        console.timeLog(trace, "sin envío de WhatsApp");
         // No se puede enviar mensaje, solo confirmar
         const razones = [];
         if (!activeYCloudConfigId) razones.push("sin configuración de mensajes");
@@ -2105,6 +2172,7 @@ Gracias por su comprensión.`;
       }
     } catch (error) {
       console.error("❌ Error enviando confirmación:", error);
+      console.timeLog(trace, "error en confirmación");
 
       // Actualizar el depósito preservando relaciones
       onUpdateDeposit({
@@ -2116,6 +2184,7 @@ Gracias por su comprensión.`;
     } finally {
       setIsSending(false);
       setIsProcessing(false);
+      console.timeEnd(trace);
     }
 
     onClose();
@@ -2224,6 +2293,7 @@ Gracias por su comprensión.`;
 
   const canConfirm =
     !isChecking &&
+    checkResult.checked &&
     !checkResult.isDuplicate &&
     editableData.empresa_id &&
     editableData.banco_id &&
@@ -2235,6 +2305,7 @@ Gracias por su comprensión.`;
   // Verificar si se puede confirmar
   const canConfirmYCloud =
     !isChecking &&
+    checkResult.checked &&
     !checkResult.isDuplicate &&
     editableData.empresa_id &&
     editableData.banco_id &&
@@ -2831,6 +2902,7 @@ Gracias por su comprensión.`;
                                     <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Fecha</th>
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Banco</th>
+                                      <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Nro. op.</th>
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Descripcion</th>
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Cargo</th>
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Abono</th>
@@ -2838,6 +2910,9 @@ Gracias por su comprensión.`;
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700 text-right">Dif</th>
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">Registro</th>
                                       <th className="border-b border-slate-200 px-4 py-3 dark:border-gray-700">GLOSA</th>
+                                      <th className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+                                        Accion
+                                      </th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-slate-200 dark:divide-gray-800">
@@ -2851,15 +2926,25 @@ Gracias por su comprensión.`;
                                               ? "bg-amber-200/90 text-amber-950 hover:bg-amber-300/90 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-800/50"
                                               : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-gray-800/60")}
                                       >
-                                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{formatSqlMovementDate(row.FECHA)}</td>
-                                        <td className="whitespace-nowrap px-4 py-3">{row.BANCO || "-"}</td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-xs">{row.DESCRIPCION || "-"}</td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.CARGO, "PEN")}</td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.ABONO, "PEN")}</td>
-                                        <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.REG, "PEN")}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{formatSqlMovementDate(row.FECHA)}</td>
+                                      <td className="whitespace-nowrap px-4 py-3">{row.BANCO || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{row.NRO_OPER || row.CUO || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-xs">{row.DESCRIPCION || "-"}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.CARGO, "PEN")}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.ABONO, "PEN")}</td>
+                                      <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.REG, "PEN")}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-right font-mono">{formatCompactMoney(row.DIF, "PEN")}</td>
                                         <td className="whitespace-nowrap px-4 py-3">{row.REGISTRO || "-"}</td>
                                         <td className="whitespace-nowrap px-4 py-3">{row.GLOSA || "-"}</td>
+                                        <td className="sticky right-0 z-10 whitespace-nowrap border-l border-slate-200 bg-inherit px-4 py-3 dark:border-gray-700 dark:bg-inherit">
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleSelectSqlCortado(row)}
+                                            className="inline-flex items-center rounded-lg border border-amber-400 bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-600"
+                                          >
+                                            Seleccionar
+                                          </button>
+                                        </td>
                                       </tr>
                                     ))}
                                   </tbody>

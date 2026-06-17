@@ -186,21 +186,7 @@ export function useDepositDashboard() {
   }, []);
 
   const ensureNotificationPermission = useCallback(async () => {
-    if (typeof window === "undefined") return "unsupported";
-    if (!("Notification" in window)) return "unsupported";
-    if (!window.isSecureContext) return "unsupported";
-
-    if (Notification.permission === "granted" || Notification.permission === "denied") {
-      return Notification.permission;
-    }
-
-    if (!notificationPermissionPromiseRef.current) {
-      notificationPermissionPromiseRef.current = Notification.requestPermission().finally(() => {
-        notificationPermissionPromiseRef.current = null;
-      });
-    }
-
-    return notificationPermissionPromiseRef.current;
+    return "disabled";
   }, []);
 
   const playAlarmTone = useCallback(async () => {
@@ -252,44 +238,12 @@ export function useDepositDashboard() {
 
   const showNativeAlert = useCallback(
     async ({ title, body, tag, requireInteraction = true, requestPermission = false }) => {
-      const permission = requestPermission
-        ? await ensureNotificationPermission()
-        : typeof Notification !== "undefined"
-        ? Notification.permission
-        : "default";
-      if (permission !== "granted") {
-        return false;
-      }
-
-      try {
-        const notification = new Notification(title, {
-          body,
-          tag,
-          renotify: true,
-          requireInteraction,
-          silent: false,
-          icon: getNotificationIconUrl(),
-          badge: getNotificationIconUrl(),
-          dir: "ltr",
-          lang: "es-PE",
-        });
-
-        notification.onclick = () => {
-          window.focus?.();
-          notification.close();
-        };
-
-        if (requireInteraction) {
-          setTimeout(() => {
-            notification.close();
-          }, 18000);
-        }
-
-        return true;
-      } catch (error) {
-        console.warn("No se pudo mostrar la alerta nativa:", error.message);
-        return false;
-      }
+      void title;
+      void body;
+      void tag;
+      void requireInteraction;
+      void requestPermission;
+      return false;
     },
     [ensureNotificationPermission, getNotificationIconUrl]
   );
@@ -406,65 +360,8 @@ export function useDepositDashboard() {
 
   const showPendingDepositNotification = useCallback(
     async (deposit) => {
-      if (!deposit || deposit.estado !== "pendiente") {
-        return false;
-      }
-
-      const permission = await ensureNotificationPermission();
-      if (permission !== "granted") {
-        return false;
-      }
-
-      const { amount, store, personal, bank, company, operation } =
-        getPendingDepositDisplayData(deposit);
-      const client = deposit.cliente || "Sin cliente";
-      const dateText = deposit.fecha_deposito
-        ? new Date(deposit.fecha_deposito).toLocaleDateString("es-PE")
-        : "";
-      const timeText = new Date().toLocaleTimeString("es-PE", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-
-      const title = `${store} - ${personal}`;
-      const bodyParts = [
-        `${company} - ${bank}`,
-        `Tienda: ${store}`,
-        `Personal: ${personal}`,
-        `OP: ${operation}`,
-        `Importe: ${amount}`,
-        `Cliente: ${client}`,
-        dateText ? `Fecha: ${dateText}` : null,
-        `Detectado: ${timeText}`,
-      ].filter(Boolean);
-
-      try {
-        const notification = new Notification(title, {
-          body: bodyParts.join("\n"),
-          tag: `deposit-pending-${deposit.id || operation}`,
-          renotify: true,
-          requireInteraction: true,
-          silent: false,
-          icon: getNotificationIconUrl(),
-          badge: getNotificationIconUrl(),
-          dir: "ltr",
-          lang: "es-PE",
-        });
-
-        notification.onclick = () => {
-          window.focus?.();
-          notification.close();
-        };
-
-        setTimeout(() => {
-          notification.close();
-        }, 15000);
-
-        return true;
-      } catch (error) {
-        console.warn("No se pudo mostrar la notificaciÃ³n nativa:", error.message);
-        return false;
-      }
+      void deposit;
+      return false;
     },
     [ensureNotificationPermission, getNotificationIconUrl, getPendingDepositDisplayData],
   );

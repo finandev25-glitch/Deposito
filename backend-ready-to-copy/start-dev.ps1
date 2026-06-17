@@ -23,13 +23,20 @@ node server.js *>&1 | Tee-Object -FilePath '$backendLogPath'
 "@
 Start-Process -WindowStyle Hidden -FilePath "powershell" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $backendCommand
 
-Write-Host "Abriendo consola de consultas del backend ..."
-$queryTailCommand = @"
-Set-Location '$root'
-Write-Host 'Consultas procesadas por Kanban, depósitos y demás endpoints'
-Get-Content -Path '$backendLogPath' -Wait -Tail 50
-"@
-Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $queryTailCommand
-
 Write-Host "Iniciando frontend en http://localhost:5173 ..."
+$frontendCommand = @"
+Set-Location '$root'
+`$env:VITE_API_BASE_URL = 'http://localhost:3000'
 npm run dev:frontend
+"@
+Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $frontendCommand
+
+Write-Host ""
+Write-Host "Backend log tail:"
+Write-Host "  $backendLogPath"
+Write-Host ""
+Write-Host "Esta consola mostrara las consultas procesadas por Kanban, depositos y demas endpoints."
+Write-Host "El frontend corre en otra ventana separada."
+Write-Host ""
+Write-Host "Consultas procesadas por Kanban, depositos y demas endpoints"
+Get-Content -Path $backendLogPath -Wait -Tail 50
