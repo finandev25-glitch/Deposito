@@ -309,6 +309,27 @@ const formatSqlDateDDMMYYYY = (value) => {
   return raw;
 };
 
+const VALID_DEPOSIT_CURRENCIES = new Set(["PEN", "USD"]);
+
+const normalizeDepositCurrency = (value) => {
+  const raw = String(value ?? "").trim().toUpperCase();
+  if (!raw) return "";
+
+  if (VALID_DEPOSIT_CURRENCIES.has(raw)) {
+    return raw;
+  }
+
+  if (raw === "S/" || raw === "S" || raw.includes("SOL")) {
+    return "PEN";
+  }
+
+  if (raw === "$" || raw.includes("USD") || raw.includes("DOLAR")) {
+    return "USD";
+  }
+
+  return "";
+};
+
 const renderSqlCell = (value, key) => {
   if (value == null || value === "") return "-";
   if (key === "FECHA") return formatSqlDateDDMMYYYY(value);
@@ -599,7 +620,7 @@ const DepositDetailModal = ({
 🔢 *Anexo:* ${editableData.anexo}
 📅 *Fecha Depósito:* ${formatearFechaDeposito(fechaDeposito)}
 🆔 *Operación:* ${operacion || deposit.numero_operacion || "-"}
-💰 *Importe:* ${moneda || editableData.moneda || "-"} ${Number(monto || editableData.monto || 0).toFixed(2)}
+💰 *Importe:* ${moneda || normalizeDepositCurrency(editableData.moneda) || "-"} ${Number(monto || editableData.monto || 0).toFixed(2)}
 
 El depósito ha sido validado y confirmado exitosamente.
 
@@ -1217,6 +1238,7 @@ ${reason}`;
       null
     );
   }, [bancos, deposit?.banco, editableData.banco_id]);
+  const selectedMoneda = normalizeDepositCurrency(editableData.moneda);
 
   useEffect(() => {
     if (deposit) {
@@ -1225,7 +1247,7 @@ ${reason}`;
         banco_id: deposit.banco?.id || "",
         anexo: deposit.anexo || "",
         monto: deposit.monto || 0,
-        moneda: deposit.moneda || "PEN",
+        moneda: normalizeDepositCurrency(deposit.moneda),
         numero_operacion_banco:
           deposit.numero_operacion_banco || deposit.numero_operacion || "",
         fecha_deposito: normalizeDateForInput(deposit.fecha_deposito),
@@ -1341,6 +1363,8 @@ ${reason}`;
     let cleanedValue = value;
     if (name === "numero_operacion_banco") {
       cleanedValue = value.replace(/\D/g, ""); // Eliminar todo lo que NO sea dígito (0-9)
+    } else if (name === "moneda") {
+      cleanedValue = normalizeDepositCurrency(value);
     }
 
     setEditableData((prev) => {
@@ -1357,12 +1381,13 @@ ${reason}`;
   };
 
   const handleCheckDuplicates = async () => {
-    console.log("Iniciando comprobación de duplicados...", {
-      numero_operacion: editableData.numero_operacion_banco,
-      monto: editableData.monto,
-      fecha_deposito: editableData.fecha_deposito,
-      isBackendConnected,
-    });
+console.log("Iniciando comprobación de duplicados...", {
+  numero_operacion: editableData.numero_operacion_banco,
+  monto: editableData.monto,
+  moneda: selectedMoneda,
+  fecha_deposito: editableData.fecha_deposito,
+  isBackendConnected,
+});
 
     if (!canCheckDuplicates) {
       setCheckResult({
@@ -1377,27 +1402,36 @@ ${reason}`;
     setIsChecking(true);
     setCheckResult({ checked: false, isDuplicate: false, message: "" });
 
-      if (!isBackendConnected) {
-        console.log("Modo simulado: comprobación de duplicados no disponible");
-        setTimeout(() => {
-          setCheckResult({
-            checked: true,
-            isDuplicate: false,
-            message: "Comprobación de duplicados no disponible en modo simulado.",
-          });
-          setDuplicateDeposits([]);
-          if (shouldUseDuplicateModals) {
-            openDuplicateModal("no_duplicate");
-          }
-          setIsChecking(false);
-        }, 500);
+    if (!isBackendConnected) {
+      console.log("Modo simulado: comprobación de duplicados no disponible");
+      setTimeout(() => {
+        setCheckResult({
+          checked: true,
+          isDuplicate: false,
+          message: "Comprobación de duplicados no disponible en modo simulado.",
+        });
+        setDuplicateDeposits([]);
+        if (shouldUseDuplicateModals) {
+          openDuplicateModal("no_duplicate");
+        }
+        setIsChecking(false);
+      }, 500);
+      return;
+    }
+
+    try {
+      if (!selectedMoneda) {
+        setCheckResult({
+          checked: true,
+          isDuplicate: true,
+          message: "Selecciona una moneda válida (PEN o USD) antes de comprobar duplicados.",
+        });
         return;
       }
 
-    try {
       const response = await apiPost('/depositos/check-duplicate', {
         monto: editableData.monto,
-        moneda: editableData.moneda,
+        moneda: selectedMoneda,
         numero_operacion_banco: editableData.numero_operacion_banco,
         excludeId: deposit.id,
       });
@@ -1479,7 +1513,7 @@ ${reason}`;
         banco_id: editableData.banco_id || null,
         anexo: editableData.anexo || null,
         monto: parseFloat(editableData.monto) || 0,
-        moneda: editableData.moneda || "PEN",
+        moneda: selectedMoneda || null,
         numero_operacion_banco: editableData.numero_operacion_banco || null,
         fecha_deposito: editableData.fecha_deposito || null,
         imagen_voucher: finalVoucherUrl,
@@ -1492,7 +1526,7 @@ ${reason}`;
       console.log("🎯 buildUpdatePayload resultado final:", finalPayload);
       return finalPayload;
     },
-    [editableData],
+    [editableData, selectedMoneda],
   );
 
   const handleConfirmDeposit = () => {
@@ -1504,7 +1538,7 @@ ${reason}`;
         empresa_id: editableData.empresa_id,
         banco_id: editableData.banco_id,
         anexo: editableData.anexo,
-        moneda: editableData.moneda,
+        moneda: selectedMoneda,
       },
     });
 
@@ -1523,7 +1557,7 @@ ${reason}`;
       camposRequeridos.push("Anexo");
     }
 
-    if (!editableData.moneda) {
+    if (!selectedMoneda) {
       camposRequeridos.push("Moneda");
     }
 
@@ -1544,7 +1578,7 @@ ${reason}`;
       empresa_id: editableData.empresa_id,
       banco_id: editableData.banco_id,
       anexo: editableData.anexo,
-      moneda: editableData.moneda,
+      moneda: selectedMoneda,
     });
 
     const payload = buildUpdatePayload({
@@ -1601,7 +1635,7 @@ ${reason}`;
             numeroOperacion:
               editableData.numero_operacion_banco || deposit.numero_operacion,
             monto: editableData.monto,
-            moneda: editableData.moneda,
+            moneda: selectedMoneda,
           };
 
           // Ejecutar en segundo plano para no bloquear la UI
@@ -1994,7 +2028,7 @@ Gracias por su comprensión.`;
           empresa_id: editableData.empresa_id,
           banco_id: editableData.banco_id,
           anexo: editableData.anexo,
-          moneda: editableData.moneda,
+          moneda: selectedMoneda,
         },
         sucursal: deposit.sucursal,
         trabajador: deposit.trabajador,
@@ -2036,7 +2070,7 @@ Gracias por su comprensión.`;
       camposRequeridos.push("Anexo");
     }
 
-    if (!editableData.moneda) {
+    if (!selectedMoneda) {
       camposRequeridos.push("Moneda");
     }
 
@@ -2110,7 +2144,7 @@ Gracias por su comprensión.`;
           banco,
           fechaDeposito: editableData.fecha_deposito,
           operacion: editableData.numero_operacion_banco || deposit.numero_operacion,
-          moneda: editableData.moneda,
+          moneda: selectedMoneda,
           monto: editableData.monto,
         });
         console.timeLog(trace, "mensaje armado", { length: mensajeConfirmacion.length });
@@ -2298,7 +2332,7 @@ Gracias por su comprensión.`;
     editableData.empresa_id &&
     editableData.banco_id &&
     editableData.anexo &&
-    editableData.moneda;
+    selectedMoneda;
 
   // Verificar si el depósito tiene datos de Chatwoot guardados
   // Note: chatwootConversationId is created during confirmation, so we don't require it here
@@ -2310,14 +2344,14 @@ Gracias por su comprensión.`;
     editableData.empresa_id &&
     editableData.banco_id &&
     editableData.anexo &&
-    editableData.moneda &&
+    selectedMoneda &&
     yCloudConfigId;
 
   const canCheckDuplicates =
     editableData.empresa_id &&
     editableData.banco_id &&
     editableData.anexo &&
-    editableData.moneda &&
+    selectedMoneda &&
     editableData.monto &&
     editableData.numero_operacion_banco &&
     editableData.fecha_deposito;
@@ -2402,9 +2436,9 @@ Gracias por su comprensión.`;
       { label: "Empresa", value: deposit?.empresa?.abreviatura || deposit?.empresa?.nombre || "-" },
       { label: "Banco", value: selectedBanco?.abreviatura || selectedBanco?.nombre || "-" },
       { label: "Anexo", value: editableData.anexo || deposit?.anexo || "-" },
-      { label: "Moneda", value: editableData.moneda || deposit?.moneda || "-" },
+      { label: "Moneda", value: selectedMoneda || "-" },
       { label: "Nro. op. banco", value: editableData.numero_operacion_banco || deposit?.numero_operacion_banco || "-" },
-      { label: "Importe", value: formatCompactMoney(editableData.monto || deposit?.monto, editableData.moneda || deposit?.moneda) },
+      { label: "Importe", value: formatCompactMoney(editableData.monto || deposit?.monto, selectedMoneda || deposit?.moneda) },
       { label: "Fecha depósito", value: editableData.fecha_deposito || deposit?.fecha_deposito || "-" },
     ],
     [deposit, editableData, selectedBanco],
@@ -3156,25 +3190,26 @@ Gracias por su comprensión.`;
                         </select>
                       </div>
 
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
-                          Moneda
-                        </label>
-                        <select
-                          name="moneda"
-                          value={editableData.moneda}
-                          onChange={handleChange}
-                          disabled={isFieldsOnlyEdit ? true : isFullEditDisabled}
-                          className={`w-full rounded-xl border px-2.5 py-1.5 text-sm outline-none transition-colors focus:ring-2 ${
-                            !editableData.moneda
-                              ? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
-                              : "border-slate-300 bg-white dark:border-gray-700 dark:bg-gray-950"
-                          }`}
-                        >
-                          <option value="PEN">Soles (PEN)</option>
-                          <option value="USD">Dólares (USD)</option>
-                        </select>
-                      </div>
+      <div className="space-y-1">
+        <label className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+          Moneda
+        </label>
+        <select
+          name="moneda"
+          value={selectedMoneda}
+          onChange={handleChange}
+          disabled={isFieldsOnlyEdit ? true : isFullEditDisabled}
+          className={`w-full rounded-xl border px-2.5 py-1.5 text-sm outline-none transition-colors focus:ring-2 ${
+            !selectedMoneda
+              ? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
+              : "border-slate-300 bg-white dark:border-gray-700 dark:bg-gray-950"
+          }`}
+        >
+          <option value="">Seleccionar</option>
+          <option value="PEN">Soles (PEN)</option>
+          <option value="USD">Dólares (USD)</option>
+        </select>
+      </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
@@ -4002,17 +4037,18 @@ Gracias por su comprensión.`;
                       <FormRow icon={DollarSign} label="Moneda">
                         <select
                           name="moneda"
-                          value={editableData.moneda}
+                          value={selectedMoneda}
                           onChange={handleChange}
                           disabled={
                             isFieldsOnlyEdit ? true : isFullEditDisabled
                           }
                           className={`w-full border rounded-lg px-3 py-1.5 focus:ring-2 text-sm disabled:bg-gray-100 dark:disabled:bg-gray-700/50 dark:disabled:text-gray-400 ${
-                            !editableData.moneda
+                            !selectedMoneda
                               ? "bg-red-50 border-red-300 dark:bg-red-900/20 dark:border-red-700"
                               : "border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 focus:ring-blue-500 dark:focus:ring-blue-400"
                           }`}
                         >
+                          <option value="">Seleccionar</option>
                           <option value="PEN">Soles (PEN)</option>
                           <option value="USD">Dólares (USD)</option>
                         </select>
@@ -4397,7 +4433,7 @@ Gracias por su comprensión.`;
                 {(!editableData.empresa_id ||
                   !editableData.banco_id ||
                   !editableData.anexo ||
-                  !editableData.moneda) && (
+                  !selectedMoneda) && (
                   <div className="w-full p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
                     <p className="text-sm text-yellow-800 dark:text-yellow-200 font-medium">
                       ⚠️ Campos requeridos faltantes:
@@ -4406,7 +4442,7 @@ Gracias por su comprensión.`;
                       {!editableData.empresa_id && <li>• Empresa</li>}
                       {!editableData.banco_id && <li>• Banco</li>}
                       {!editableData.anexo && <li>• Anexo</li>}
-                      {!editableData.moneda && <li>• Moneda</li>}
+                      {!selectedMoneda && <li>• Moneda</li>}
                     </ul>
                   </div>
                 )}
@@ -4503,7 +4539,7 @@ Gracias por su comprensión.`;
                           deposit.numero_operacion_banco ||
                           "",
                         importe: editableData.monto || deposit.monto,
-                        moneda: editableData.moneda || deposit.moneda,
+                        moneda: selectedMoneda || "",
                         cliente: editableData.cliente || deposit.cliente,
                         estado: deposit.estado,
                         sucursal: deposit.sucursal?.nombre || "",
@@ -4551,7 +4587,7 @@ Gracias por su comprensión.`;
                           deposit.numero_operacion_banco ||
                           "",
                         importe: editableData.monto || deposit.monto,
-                        moneda: editableData.moneda || deposit.moneda,
+                        moneda: selectedMoneda || "",
                         cliente: editableData.cliente || deposit.cliente,
                         estado: deposit.estado,
                         sucursal: deposit.sucursal?.nombre || "",
