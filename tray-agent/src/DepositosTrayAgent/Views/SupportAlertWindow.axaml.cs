@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -11,6 +12,13 @@ namespace DepositosTrayAgent.Views;
 public partial class SupportAlertWindow : Window
 {
     private static readonly TimeSpan AutoCloseDuration = TimeSpan.FromSeconds(15);
+    private static readonly Regex GuidLikePattern = new(
+        @"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex LeadingIdPattern = new(
+        @"^\s*(?:id|id[:\-]?)?\s*\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b\s*[:\-]?\s*",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private readonly TrayAppController _controller;
     private readonly SupportRequestRecord _request;
     private readonly DispatcherTimer _flashTimer;
@@ -36,7 +44,7 @@ public partial class SupportAlertWindow : Window
 
         ReasonText.Text = BuildReasonText(request);
         TitleText.Text = "URGENTE!!";
-        CountdownText.Text = "Se cierra en 15 segundos";
+        CountdownCircleText.Text = "15";
         OpenDashboardButton.Click += async (_, _) =>
         {
             if (await _controller.AcknowledgeAndOpenDashboardAsync(_request))
@@ -63,10 +71,7 @@ public partial class SupportAlertWindow : Window
         {
             Interval = TimeSpan.FromMilliseconds(250),
         };
-        _autoCloseTimer.Tick += (_, _) =>
-        {
-            TickAutoCloseCountdown();
-        };
+        _autoCloseTimer.Tick += (_, _) => TickAutoCloseCountdown();
 
         _shakeTimer = new DispatcherTimer
         {
@@ -106,7 +111,7 @@ public partial class SupportAlertWindow : Window
         const int leftMargin = 12;
         const int bottomMargin = 12;
 
-        var width = Math.Min((int)Math.Round(Width), Math.Max(360, workingArea.Width / 5));
+        var width = Math.Min((int)Math.Round(Width), Math.Max(235, workingArea.Width / 6));
         var height = Math.Max((int)Math.Round(Height), taskbarThickness);
         var left = workingArea.X + leftMargin;
         var top = Math.Max(workingArea.Y, workingArea.Bottom - height - bottomMargin);
@@ -150,8 +155,6 @@ public partial class SupportAlertWindow : Window
 
         _isTimedOut = true;
         _autoCloseTimer.Stop();
-        CountdownText.Text = "Vencida";
-        CountdownText.Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#FCA5A5"));
         RootBorder.Background = new SolidColorBrush(Avalonia.Media.Color.Parse("#7F1D1D"));
 
         if (await _controller.ExpireSupportRequestAsync(_request))
@@ -164,7 +167,7 @@ public partial class SupportAlertWindow : Window
     {
         var remaining = remainingOverride ?? (_closeAtUtc - DateTimeOffset.UtcNow);
         var seconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
-        CountdownText.Text = $"Se cierra en {seconds} segundos";
+        CountdownCircleText.Text = seconds.ToString();
     }
 
     private void ToggleFlash()
@@ -203,10 +206,17 @@ public partial class SupportAlertWindow : Window
             isAutomatic = true;
         }
 
-        reason = reason.Trim();
+        reason = StripTechnicalIdentifiers(reason);
+        reason = CollapseWhitespace(reason);
+
+        if (isAutomatic)
+        {
+            reason = BuildAutomaticSummary(request);
+        }
+
         if (string.IsNullOrWhiteSpace(reason))
         {
-            reason = "Sin motivo";
+            reason = isAutomatic ? BuildAutomaticSummary(request) : "Sin motivo";
         }
 
         if (isAutomatic && reason.Length > 70)
@@ -222,9 +232,7 @@ public partial class SupportAlertWindow : Window
         var prefixes = new[]
         {
             "Alerta automatica:",
-            "Alerta automática:",
             "Alerta automatica -",
-            "Alerta automática -",
         };
 
         foreach (var prefix in prefixes)
@@ -239,5 +247,28 @@ public partial class SupportAlertWindow : Window
         }
 
         return false;
+    }
+
+    private static string StripTechnicalIdentifiers(string reason)
+    {
+        reason = LeadingIdPattern.Replace(reason, string.Empty);
+        reason = GuidLikePattern.Replace(reason, string.Empty);
+
+        return reason.Replace("  ", " ");
+    }
+
+    private static string CollapseWhitespace(string value)
+    {
+        return Regex.Replace(value, @"\s+", " ").Trim();
+    }
+
+    private static string BuildAutomaticSummary(SupportRequestRecord request)
+    {
+        if (request.PendingCount > 0)
+        {
+            return $"Depositos del dia: {request.PendingCount} pendientes";
+        }
+
+        return "Depositos del dia";
     }
 }
